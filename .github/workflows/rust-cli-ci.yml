@@ -5,6 +5,10 @@ on:
     branches: [main, feat/github-ledger-pages, feat/v1.1-dashboard-pricing-platform-fixes]
   pull_request:
 
+concurrency:
+  group: rust-cli-ci-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
