@@ -88,6 +88,52 @@ pub struct Ledger {
     pub scan_ms: u64,
 }
 
+/// Browser-readable aggregate snapshot. It intentionally contains only the same
+/// aggregate accounting/routing dimensions shown in the dashboard and omits the
+/// machine hostname and every raw session payload. The full ledger remains
+/// AES-256-GCM encrypted in `ledger.json`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicDeviceInfo {
+    pub id: String,
+    pub name: String,
+    pub platform: String,
+    pub arch: String,
+    pub app_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicLedger {
+    pub schema_version: u32,
+    pub kind: String,
+    pub generated_at: String,
+    pub device: PublicDeviceInfo,
+    pub rows: Vec<UsageRow>,
+    pub totals: Metrics,
+    pub scan_ms: u64,
+}
+
+impl From<&Ledger> for PublicLedger {
+    fn from(ledger: &Ledger) -> Self {
+        Self {
+            schema_version: 1,
+            kind: "token-monitor-public-ledger".to_string(),
+            generated_at: ledger.generated_at.clone(),
+            device: PublicDeviceInfo {
+                id: ledger.device.id.clone(),
+                name: ledger.device.name.clone(),
+                platform: ledger.device.platform.clone(),
+                arch: ledger.device.arch.clone(),
+                app_version: ledger.device.app_version.clone(),
+            },
+            rows: ledger.rows.clone(),
+            totals: ledger.totals.clone(),
+            scan_ms: ledger.scan_ms,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EncryptedLedger {
@@ -98,4 +144,33 @@ pub struct EncryptedLedger {
     pub algorithm: String,
     pub nonce: String,
     pub ciphertext: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_ledger_omits_hostname_but_preserves_aggregate_rows() {
+        let ledger = Ledger {
+            schema_version: 3,
+            generated_at: "2026-08-26T00:00:00Z".into(),
+            device: DeviceInfo {
+                id: "device-1".into(),
+                name: "Laptop".into(),
+                platform: "macos".into(),
+                arch: "aarch64".into(),
+                hostname: "secret-host.local".into(),
+                app_version: "1.0.1".into(),
+            },
+            rows: Vec::new(),
+            totals: Metrics::default(),
+            scan_ms: 10,
+        };
+        let public = PublicLedger::from(&ledger);
+        let json = serde_json::to_string(&public).unwrap();
+        assert!(json.contains("token-monitor-public-ledger"));
+        assert!(!json.contains("secret-host.local"));
+        assert_eq!(public.device.name, "Laptop");
+    }
 }
