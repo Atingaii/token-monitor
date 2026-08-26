@@ -51,12 +51,26 @@ fn official_provider_name(raw: &str) -> Option<&'static str> {
     }
 }
 
+fn official_identity(upstream_vendor: String) -> ProviderIdentity {
+    // `provider` on UsageRow preserves the source's raw provider identifier for
+    // auditing. Once route evidence proves a first-party route, the normalized
+    // route-provider dimension intentionally collapses vendor-specific labels to
+    // one canonical `official` bucket. The upstream vendor remains available in
+    // `upstreamVendor`, so no useful dimension is lost and the dashboard cannot
+    // misleadingly show a first-party request as a custom provider.
+    ProviderIdentity {
+        upstream_vendor,
+        route_provider: "official".into(),
+        route_type: "official".into(),
+    }
+}
+
 pub fn route_hint_from_base_url(provider_id: &str, base_url: &str) -> RouteHint {
     let id = norm(provider_id);
     let url = base_url.trim().to_ascii_lowercase();
-    if url.contains("api.openai.com") { return RouteHint { route_provider: "openai".into(), route_type: "official".into() }; }
-    if url.contains("api.anthropic.com") { return RouteHint { route_provider: "anthropic".into(), route_type: "official".into() }; }
-    if url.contains("generativelanguage.googleapis.com") { return RouteHint { route_provider: "google".into(), route_type: "official".into() }; }
+    if url.contains("api.openai.com") || url.contains("api.anthropic.com") || url.contains("generativelanguage.googleapis.com") {
+        return RouteHint { route_provider: "official".into(), route_type: "official".into() };
+    }
     if url.contains("openai.azure.com") || url.contains("azure.com/openai") { return RouteHint { route_provider: "azure-openai".into(), route_type: "cloud".into() }; }
     if url.contains("bedrock") || url.contains("amazonaws.com") { return RouteHint { route_provider: "aws-bedrock".into(), route_type: "cloud".into() }; }
     if url.contains("aiplatform.googleapis.com") || url.contains("vertex") { return RouteHint { route_provider: "google-vertex".into(), route_type: "cloud".into() }; }
@@ -81,9 +95,12 @@ pub fn route_hint_from_base_url(provider_id: &str, base_url: &str) -> RouteHint 
 pub fn classify(raw_provider: Option<&str>, model: &str, explicit: bool, hint: Option<&RouteHint>) -> ProviderIdentity {
     let upstream_vendor = infer_upstream_vendor(model);
     if let Some(hint) = hint {
+        if hint.route_type == "official" {
+            return official_identity(upstream_vendor);
+        }
         return ProviderIdentity { upstream_vendor, route_provider: hint.route_provider.clone(), route_type: hint.route_type.clone() };
     }
-    let raw = raw_provider.map(norm).filter(|v| !v.is_empty() && v != "unknown");
+    let raw = raw_provider.map(norm).filter(|value| !value.is_empty() && value != "unknown");
     let Some(raw) = raw else {
         return ProviderIdentity { upstream_vendor, route_provider: "unknown".into(), route_type: "unknown".into() };
     };
@@ -124,8 +141,8 @@ pub fn classify(raw_provider: Option<&str>, model: &str, explicit: bool, hint: O
         return ProviderIdentity { upstream_vendor, route_provider: raw, route_type: "self-hosted".into() };
     }
     if explicit {
-        if let Some(official) = official_provider_name(&raw) {
-            return ProviderIdentity { upstream_vendor, route_provider: official.into(), route_type: "official".into() };
+        if official_provider_name(&raw).is_some() {
+            return official_identity(upstream_vendor);
         }
         return ProviderIdentity { upstream_vendor, route_provider: raw, route_type: "custom".into() };
     }
@@ -138,31 +155,52 @@ mod tests {
 
     #[test]
     fn distinguishes_upstream_from_route() {
-        let id = classify(Some("amazon-bedrock"), "claude-sonnet-4", true, None);
-        assert_eq!(id.upstream_vendor, "anthropic");
-        assert_eq!(id.route_provider, "aws-bedrock");
-        assert_eq!(id.route_type, "cloud");
+        let identity = classify(Some("amazon-bedrock"), "claude-sonnet-4", true, None);
+        assert_eq!(identity.upstream_vendor, "anthropic");
+        assert_eq!(identity.route_provider, "aws-bedrock");
+        assert_eq!(identity.route_type, "cloud");
     }
 
     #[test]
     fn inferred_openai_is_not_called_official() {
-        let id = classify(Some("openai"), "gpt-5.6-sol", false, None);
-        assert_eq!(id.upstream_vendor, "openai");
-        assert_eq!(id.route_type, "unknown");
+        let identity = classify(Some("openai"), "gpt-5.6-sol", false, None);
+        assert_eq!(identity.upstream_vendor, "openai");
+        assert_eq!(identity.route_type, "unknown");
+    }
+
+    #[test]
+    fn proven_first_party_route_uses_one_official_bucket() {
+        let openai = classify(Some("openai"), "gpt-5.6-sol", true, None);
+        assert_eq!(openai.upstream_vendor, "openai");
+        assert_eq!(openai.route_provider, "official");
+        assert_eq!(openai.route_type, "official");
+
+        let anthropic = classify(Some("anthropic"), "claude-sonnet-4", true, None);
+        assert_eq!(anthropic.upstream_vendor, "anthropic");
+        assert_eq!(anthropic.route_provider, "official");
+        assert_eq!(anthropic.route_type, "official");
     }
 
     #[test]
     fn explicit_custom_provider_is_preserved() {
-        let id = classify(Some("my-newapi-gateway"), "gpt-5.6-sol", true, None);
-        assert_eq!(id.route_provider, "newapi");
-        assert_eq!(id.route_type, "relay");
+        let identity = classify(Some("my-newapi-gateway"), "gpt-5.6-sol", true, None);
+        assert_eq!(identity.route_provider, "newapi");
+        assert_eq!(identity.route_type, "relay");
+    }
+
+    #[test]
+    fn official_base_url_maps_to_official_bucket() {
+        let hint = route_hint_from_base_url("openai", "https://api.openai.com/v1");
+        let identity = classify(Some("openai"), "gpt-5.6-sol", true, Some(&hint));
+        assert_eq!(identity.route_provider, "official");
+        assert_eq!(identity.route_type, "official");
     }
 
     #[test]
     fn custom_openai_base_url_overrides_official_name() {
         let hint = route_hint_from_base_url("openai", "https://relay.example.com/v1");
-        let id = classify(Some("openai"), "gpt-5.6-sol", true, Some(&hint));
-        assert_eq!(id.route_provider, "custom-relay");
-        assert_eq!(id.route_type, "relay");
+        let identity = classify(Some("openai"), "gpt-5.6-sol", true, Some(&hint));
+        assert_eq!(identity.route_provider, "custom-relay");
+        assert_eq!(identity.route_type, "relay");
     }
 }
