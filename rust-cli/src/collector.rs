@@ -4,17 +4,20 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use tokscale_core::pricing::PricingService;
-use tokscale_core::{
-    canonical_model_id, parse_local_clients, LocalParseOptions, ScannerSettings, TokenBreakdown,
-};
+use tokscale_core::{canonical_model_id, parse_local_clients, ClientId, LocalParseOptions, ScannerSettings, TokenBreakdown};
 
+use crate::evidence;
 use crate::model::{DeviceInfo, Ledger, Metrics, UsageRow};
+use crate::provider;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct RowKey {
     date: String,
     client: String,
     provider: String,
+    upstream_vendor: String,
+    route_provider: String,
+    route_type: String,
     model: String,
     tier: Option<String>,
 }
@@ -26,13 +29,8 @@ struct RowAccumulator {
 }
 
 fn load_pricing() -> Option<Arc<PricingService>> {
-    if let Some(cached) = PricingService::load_cached_any_age() {
-        return Some(Arc::new(cached));
-    }
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .ok()?;
+    if let Some(cached) = PricingService::load_cached_any_age() { return Some(Arc::new(cached)); }
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
     runtime.block_on(async { PricingService::get_or_init().await.ok() })
 }
 
@@ -41,13 +39,7 @@ fn message_cost(msg: &tokscale_core::ParsedMessage, pricing: Option<&PricingServ
     pricing.calculate_cost_with_provider(
         &msg.model_id,
         Some(&msg.provider_id),
-        &TokenBreakdown {
-            input: msg.input,
-            output: msg.output,
-            cache_read: msg.cache_read,
-            cache_write: msg.cache_write,
-            reasoning: msg.reasoning,
-        },
+        &TokenBreakdown { input: msg.input, output: msg.output, cache_read: msg.cache_read, cache_write: msg.cache_write, reasoning: msg.reasoning },
     )
 }
 
@@ -56,15 +48,23 @@ fn normalize_text(value: &str, fallback: &str) -> String {
     if value.is_empty() { fallback.to_string() } else { value.to_string() }
 }
 
-/// Tokscale currently exposes a provider dimension but not a universal service-tier
-/// dimension. Keep the schema ready for fast/standard/priority whenever a source
-/// exposes it without guessing from model names.
-fn detect_service_tier(_client: &str, _provider: &str, _model: &str) -> Option<String> {
-    None
+fn load_scanner_settings() -> ScannerSettings {
+    let Some(config_dir) = dirs::config_dir() else { return ScannerSettings::default(); };
+    let Ok(data) = std::fs::read(config_dir.join("tokscale/settings.json")) else { return ScannerSettings::default(); };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&data) else { return ScannerSettings::default(); };
+    value.get("scanner").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
+}
+
+pub fn supported_clients() -> Vec<String> {
+    let mut clients: Vec<String> = ClientId::iter().map(|id| id.as_str().to_string()).collect();
+    clients.sort();
+    clients
 }
 
 pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
     let started = Instant::now();
+    let incremental = since.is_some();
+    let scanner_settings = load_scanner_settings();
     let parsed = parse_local_clients(LocalParseOptions {
         home_dir: None,
         use_env_roots: true,
@@ -72,23 +72,36 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
         since,
         until: None,
         year: None,
-        scanner_settings: ScannerSettings::default(),
+        scanner_settings,
     })
     .map_err(|error| anyhow::anyhow!(error))
     .context("failed to scan local AI coding-tool sessions")?;
 
+    let evidence = evidence::scan(incremental);
     let pricing = load_pricing();
     let mut grouped: BTreeMap<RowKey, RowAccumulator> = BTreeMap::new();
 
     for msg in parsed.messages {
         let client = normalize_text(&msg.client, "unknown");
-        let provider = normalize_text(&msg.provider_id, "unknown");
         let model = canonical_model_id(&msg.model_id);
-        let tier = detect_service_tier(&client, &provider, &model);
+        let session_evidence = evidence::for_message(&evidence, &client, &msg.session_id);
+        let raw_provider = session_evidence
+            .and_then(|e| e.explicit_provider.as_deref())
+            .unwrap_or_else(|| msg.provider_id.as_str());
+        let identity = provider::classify(
+            Some(raw_provider),
+            &model,
+            session_evidence.and_then(|e| e.explicit_provider.as_ref()).is_some(),
+            session_evidence.and_then(|e| e.route_hint.as_ref()),
+        );
+        let tier = session_evidence.and_then(|e| e.tier.clone());
         let key = RowKey {
             date: msg.date.clone(),
             client,
-            provider,
+            provider: normalize_text(raw_provider, "unknown"),
+            upstream_vendor: identity.upstream_vendor,
+            route_provider: identity.route_provider,
+            route_type: identity.route_type,
             model,
             tier,
         };
@@ -101,9 +114,7 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
         entry.metrics.messages = entry.metrics.messages.saturating_add(msg.message_count.max(0));
         entry.metrics.duration_ms = entry.metrics.duration_ms.saturating_add(msg.duration_ms.unwrap_or(0).max(0));
         entry.metrics.cost_usd += message_cost(&msg, pricing.as_deref()).max(0.0);
-        if !msg.session_id.is_empty() {
-            entry.sessions.insert(msg.session_id);
-        }
+        if !msg.session_id.is_empty() { entry.sessions.insert(msg.session_id); }
     }
 
     let mut rows = Vec::with_capacity(grouped.len());
@@ -115,6 +126,9 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
             date: key.date,
             client: key.client,
             provider: key.provider,
+            upstream_vendor: key.upstream_vendor,
+            route_provider: key.route_provider,
+            route_type: key.route_type,
             model: key.model,
             tier: key.tier,
             metrics: value.metrics,
@@ -137,15 +151,28 @@ pub fn merge_incremental(mut previous: Ledger, partial: Ledger, since: &str) -> 
     previous.rows.sort_by(|a, b| {
         a.date.cmp(&b.date)
             .then_with(|| a.client.cmp(&b.client))
-            .then_with(|| a.provider.cmp(&b.provider))
+            .then_with(|| a.route_provider.cmp(&b.route_provider))
             .then_with(|| a.model.cmp(&b.model))
     });
     previous.generated_at = partial.generated_at;
     previous.device = partial.device;
     previous.scan_ms = partial.scan_ms;
     previous.totals = Metrics::default();
-    for row in &previous.rows {
-        previous.totals.add(&row.metrics);
-    }
+    for row in &previous.rows { previous.totals.add(&row.metrics); }
     previous
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_tokscale_client_is_exposed() {
+        let clients = supported_clients();
+        assert!(clients.contains(&"codex".to_string()));
+        assert!(clients.contains(&"claude".to_string()));
+        assert!(clients.contains(&"opencode".to_string()));
+        assert!(clients.contains(&"gemini".to_string()));
+        assert!(clients.len() >= 20, "expected broad Tokscale client coverage, got {}", clients.len());
+    }
 }
