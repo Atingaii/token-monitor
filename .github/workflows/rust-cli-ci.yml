@@ -89,13 +89,13 @@ jobs:
           ! grep -R -i -E 'auth\.json|prompt[^a-z]|assistant response|api[_ -]?key' web/*.js || (echo 'Dashboard code must not depend on private session payloads' && exit 1)
 
   upstream-parser-suite:
-    name: Tokscale parser regression suite
+    name: Tokscale v4.14.0 parser regression suite
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           repository: junhoyeo/tokscale
-          ref: 1ec865d4e9e5adf157efb9f5c2dfaf29630d71e5
+          ref: v4.14.0
       - uses: dtolnay/rust-toolchain@stable
       - name: Run all tokscale-core parser/scanner tests
         run: cargo test -p tokscale-core --all-targets
