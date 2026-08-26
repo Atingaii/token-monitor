@@ -1,303 +1,177 @@
-<p align="right">
-   <a href="./README.md">EN</a> | <strong>简</strong> | <a href="./README.zh-TW.md">繁</a> | <a href="./README.ko.md">KO</a> | <a href="./README.ja.md">JA</a>
-</p>
-<div align="center">
-    <img src=".github/assets/app.png" alt="Token Monitor logo" width="120">
-    <h1>Token Monitor</h1>
-</div>
+# Token Monitor
 
-<p align="center">
-    <em>跨设备聚合每个 AI 编程工具的实时用量。</em>
-</p>
+一个 **无服务器、跨设备、CLI-only** 的 AI Coding Token / 费用分析工具。
 
-<p align="center">
-    <a href="https://github.com/Javis603/token-monitor/releases"><img src="https://img.shields.io/github/v/release/Javis603/token-monitor?include_prereleases&style=flat-square&label=release&color=22c55e" alt="最新发布" /></a>
-    <a href="https://github.com/Javis603/token-monitor/releases"><img src="https://img.shields.io/github/downloads/Javis603/token-monitor/total?style=flat-square&color=22c55e" alt="总下载量" /></a>
-    <img src="https://img.shields.io/badge/Windows-10%2B-0078D4?style=flat-square" alt="Windows 10 或更新" />
-    <img src="https://img.shields.io/badge/macOS-12%2B-0A84FF?style=flat-square&logo=apple&logoColor=white" alt="macOS 12 或更新" />
-    <img src="https://img.shields.io/badge/Linux-x64-64748b?style=flat-square&logo=linux&logoColor=white" alt="Linux x64" />
-    <a href="https://discord.gg/HmdNVVvw5P"><img src="https://img.shields.io/discord/1344259784219689031?color=5865F2&label=Discord&logo=discord&logoColor=white&style=flat-square" alt="Discord"></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-A855F7?style=flat-square" alt="许可证：MIT" /></a>
-</p>
+Windows、Linux、macOS 上只安装一个 Rust 单文件可执行程序。它复用 Tokscale Core 扫描本地 AI coding 工具的会话统计，定期把**加密后的聚合账本**写入 GitHub；所有图表与筛选都在静态 GitHub Pages 中完成。
 
-<div align="center">
-    <img src=".github/assets/demo.gif">
-</div>
+> 不需要 Electron、Node.js、Python、Docker、VPS、数据库或常驻 Hub。
 
-## Token Monitor 是什么？
+## 主要特性
 
-一款桌面小部件，实时显示 Claude Code、Codex、Cursor、GitHub Copilot、Cherry Studio 等 32+ 种 AI 编程工具的 Token 用量与 AI 工具额度，具备实时多设备同步与历史使用趋势功能，并支持按工具、设备、模型、session 或项目分项显示。
+- Windows / Linux / macOS。
+- 单个 Rust 二进制；用户机器无需安装 Rust。
+- 不常驻：默认由系统调度器每 15 分钟执行一次短暂 `sync`，其余时间进程占用为 0。
+- 继承 Tokscale Core 的多客户端解析能力，不局限于 Codex；包括 Codex、Claude Code、OpenCode、Gemini、Kimi、Cursor 相关数据源以及 Tokscale 当前支持的其他客户端。
+- 按 **时间 / 设备 / 工具 / 模型 / 模型厂商 / 路由提供商 / 路由类型 / Provider / Tier** 分析。
+- 路由身份区分：官方、AWS Bedrock、Azure OpenAI、Google Vertex、OpenRouter、New API / One API / LiteLLM / CLIProxyAPI 类中转、自托管及未知路由。
+- Provider 采用保守证据规则：只有日志或 provider 配置能证明时才标为官方；只根据模型名推断出的 OpenAI/Anthropic 等不会被误标成官方渠道。
+- Fast / Standard / Priority 等 Tier 只在源日志明确暴露时记录，不通过价格或延迟猜测。
+- API-equivalent cost：用于估算同等 Token 若按 API 价格计费的价值，不代表订阅用户的实际账单。
+- 静态 Web 分析页：折线图、面积图、柱状图、堆叠柱、环形图、Treemap、明细表格与 CSV 导出。
+- 页面风格采用克制的后台控制台布局，不使用 Electron GUI。
 
-## 支持的工具
+## 架构
 
-Token Monitor 对 Token 用量、账户额度和 session 明细分别支持：
+```text
+Windows / Linux / macOS
+        │
+        │ local scan (Tokscale Core)
+        ▼
+ token-monitor sync
+        │
+        │ daily aggregate only
+        │ AES-256-GCM
+        ▼
+GitHub public repository
+  tm-ledger-<device-hash> branches
+        │
+        │ encrypted ledger.json
+        ▼
+GitHub Pages static dashboard
+        │
+        └─ browser-local decrypt + filter + chart
+```
 
-| Logo | 工具 | 数据路径 | Token 用量 | AI 工具额度 | session 明细 |
-|:---:|------|-----------|:---:|:---:|:---:|
-| <img src=".github/assets/tools-icon/claude.png" width="28" alt="Claude Code" /> | Claude Code | `~/.claude/projects/`、`~/.claude/transcripts/` | ✅ | ✅ | ✅ |
-| <img src=".github/assets/tools-icon/codex.png" width="28" alt="Codex" /> | Codex | `~/.codex/`（`sessions/`、`archived_sessions/`） | ✅ | ✅ | ✅ |
-| <img src=".github/assets/tools-icon/opencode.png" width="28" alt="OpenCode" /> | OpenCode | `~/.local/share/opencode/`（`opencode*.db`、`storage/message/`） | ✅ | ✅ | ✅ |
-| <img src=".github/assets/tools-icon/hermes-agent.png" width="28" alt="Hermes Agent" /> | Hermes Agent | `~/.hermes/state.db` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/openclaw.png" width="28" alt="OpenClaw" /> | OpenClaw | `~/.openclaw/agents/` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/cursor.png" width="28" alt="Cursor" /> | Cursor | `~/.config/tokscale/cursor-cache/` | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/antigravity.png" width="28" alt="Antigravity" /> | Antigravity | `~/.gemini/`（`antigravity/`、`antigravity-ide/`、`antigravity-backup/`、`antigravity-cli/conversations/`） | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/cline.png" width="28" alt="Cline" /> | Cline | VS Code globalStorage tasks（`.../saoudrizwan.claude-dev/tasks/`）、`~/.cline/data/sessions/` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/kimi.png" width="28" alt="Kimi" /> | Kimi CLI / Kimi Code / Kimi Work | `~/.kimi/sessions/`、`~/.kimi-code/sessions/`、`<platform-app-data>/kimi-desktop/` | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/qwen.png" width="28" alt="Qwen" /> | Qwen CLI | `~/.qwen/projects/` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/xai.png" width="28" alt="Grok Build" /> | Grok Build | `~/.grok/`（`sessions/`、`logs/unified.jsonl`） | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/copilot.png" width="28" alt="GitHub Copilot" /> | GitHub Copilot | VS Code `workspaceStorage/*/chatSessions/`、`~/.copilot/`（`otel/`、`data.db`） | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/pi.png" width="28" alt="Pi" /> | Pi / Oh My Pi | `~/.pi/agent/sessions/`、`~/.omp/agent/sessions/` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/zed.png" width="28" alt="Zed" /> | Zed | `~/.local/share/zed/threads/threads.db` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/kilocode.png" width="28" alt="Kilo Code" /> | Kilo Code | VS Code globalStorage tasks（`.../kilocode.kilo-code/tasks/`）—— 仅 Linux 与远程/WSL | ✅ | — | — |
-| <img src=".github/assets/tools-icon/commandcode.png" width="28" alt="Command Code" /> | Command Code | `~/.commandcode/projects/**/*.jsonl` | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/mimo-code.png" width="28" alt="MiMo Code" /> | MiMo Code | `~/.local/share/mimocode/mimocode.db` | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/zcode.png" width="28" alt="ZCode" /> | ZCode / GLM | `~/.zcode/`（`projects/`、`cli/db/db.sqlite`） | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/kiro.png" width="28" alt="Kiro" /> | Kiro | `~/.kiro/sessions/cli/`、Kiro IDE globalStorage 与 `kiro-cli` 数据库 | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/codebuddy.png" width="28" alt="CodeBuddy" /> | CodeBuddy | `~/.codebuddy/projects/` 与 IDE / VS Code 扩展日志 | ✅ | — | — |
-| <img src=".github/assets/tools-icon/workbuddy.png" width="28" alt="WorkBuddy" /> | WorkBuddy | `~/.workbuddy/projects/`、`~/.workbuddy/workbuddy.db` | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/proma.png" width="28" alt="Proma" /> | Proma | `~/.proma/agent-sessions/*.jsonl` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/qoder.png" width="28" alt="Qoder" /> | Qoder | `<platform-app-data>/QoderCN/SharedClientCache/cache/db/local.db`（仅限中国版） | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/reasonix.png" width="28" alt="Reasonix" /> | Reasonix | `~/.reasonix/`（`stats/`、`sessions/`、`projects/*/sessions/`） | ✅ | — | — |
-| <img src=".github/assets/tools-icon/deepseek.png" width="28" alt="DeepSeek" /> | DeepSeek / DeepSeek Harness | `~/.dsh/sessions/`（`session.jsonl`、`session.jsonl.zstd`） | ✅ | ✅ | ✅ |
-| <img src=".github/assets/tools-icon/cherrystudio.png" width="28" alt="Cherry Studio" /> | Cherry Studio | `<platform-app-data>/CherryStudio/`（`Data/Agents/.claude/projects/` V2、`.claude/projects/` legacy） | ✅ | — | — |
-| <img src=".github/assets/tools-icon/openrouter.png" width="28" alt="OpenRouter" /> | OpenRouter | OpenRouter API 密钥（查询用量／密钥上限；获授权访问 credits 时显示余额，官方文档指定 Management 密钥） | — | ✅ | — |
-| <img src=".github/assets/tools-icon/minimax.png" width="28" alt="Minimax" /> | Minimax | Minimax API 密钥（通过 Minimax API 查询 Token Plan 额度） | — | ✅ | — |
-| <img src=".github/assets/tools-icon/volcengine.png" width="28" alt="Volcengine" /> | Volcengine | Ark API key 或火山引擎 AK/SK（通过火山引擎 API 查询火山方舟 Coding Plan 额度） | — | ✅ | — |
-| <img src=".github/assets/tools-icon/ollama.png" width="28" alt="Ollama" /> | Ollama | Ollama Cloud cookie（通过 ollama.com/settings 查询 session／每周用量） | — | ✅ | — |
-| <img src=".github/assets/tools-icon/trae.png" width="28" alt="Trae CN" /> | Trae CN | Trae CN access token（通过 trae.cn 查询 Trae CN／SOLO credits） | — | ✅ | — |
-| <img src=".github/assets/tools-icon/thirdparty.png" width="28" alt="第三方 API" /> | 第三方 API | New API / Sub2API 兼容账号预设方案（包括兼容的 One API 分支）、New API 密钥预设方案与自定义余额端点 | — | ✅ | — |
+每台设备拥有独立的 `tm-ledger-*` 分支。每次同步用新的无父提交强制替换该设备分支，因此不会让主分支产生大量 telemetry commit，也不会让不同设备发生写冲突。
 
-<details>
-<summary><strong>注意事项、Custom 余额端点，以及用环境变量覆盖的数据路径</strong></summary>
+## 隐私边界
 
-<br>
+上传的统计行包含：日期、设备 ID/名称、客户端、模型、模型厂商、路由标签、Token buckets、消息数、Session 数、耗时和 API 等价费用。
 
-- 上表为默认路径。Token Monitor 与 Tokscale 遵循相同的环境变量覆盖：`~/.local/share/` 下的路径跟随 `$XDG_DATA_HOME`，各工具另有 `$CODEX_HOME`、`$GROK_HOME`、`$HERMES_HOME`、`$KIMI_CODE_HOME`、`$DSH_HOME`、`$REASONIX_STATE_HOME`、`$REASONIX_HOME` 以及 `$CLINE_*` 系列。
+不会上传：Prompt、模型回复、reasoning 文本、源代码、项目文件内容、项目路径、完整会话 JSONL、`auth.json`、API Key 或 GitHub Token。
 
-- Command Code transcript 不包含实际 Token 数或每条消息的模型信息。Token 用量根据 transcript 文本估算；模型归属与推算成本可能反映当前配置的模型，而不是每次请求当时实际使用的模型。
-
-- Custom 会从一个 GET 余额端点映射数值 JSON 字段；仅兼容 OpenAI 或 Anthropic API 并不足够。
-
-#### Qoder CN（本地适配器）
-
-Qoder CN 的 Token 用量来自应用本地 SQLite 数据库，而非 API —— 在 Settings → tools 中启用（可选，默认关闭）。数据库路径按平台自动探测：macOS `~/Library/Application Support/QoderCN/SharedClientCache/cache/db/local.db`、Windows `%APPDATA%\QoderCN\SharedClientCache\cache\db\local.db`、Linux `~/.config/QoderCN/SharedClientCache/cache/db/local.db` —— 可用 `TOKEN_MONITOR_QODER_CN_DB_PATH` 覆盖。
-
-这是高级本地集成：读取需要 PATH 上的 `sqlite3` CLI，或内置无需 flag 即可用 `node:sqlite` 的 Node 运行时（Node ≥ 23.4；Electron 组件可能需要 CLI）。读取失败会写入日志；若已有完整快照，采集器会保留它而不是用零用量覆盖。成本按每个映射模型在 models.dev 目录中的价格估算；Qoder 若改变数据库 schema，适配器可能失效。
-</details>
-
-## 界面展示
-
-<table>
-<tr>
-<td width="290" align="center"><img src=".github/assets/home-view.png" width="250" alt="主页视图"><br><sub>可自定义仪表板：自选要显示的模块与排序</sub></td>
-<td width="290" align="center"><img src=".github/assets/limits-view.png" width="250" alt="额度视图"><br><sub>多账号并列，Codex 可一键切换本机账号</sub></td>
-<td width="290" align="center"><img src=".github/assets/tools-view.png" width="250" alt="工具视图"><br><sub>点任一工具展开输入／输出与缓存命中明细</sub></td>
-</tr>
-<tr>
-<td width="290" align="center"><img src=".github/assets/sessions-view.png" width="250" alt="Session 视图"><br><sub>点进单个 session，逐条提问拆解 token 与用到的工具</sub></td>
-<td width="290" align="center"><img src=".github/assets/models-view.png" width="250" alt="模型视图"><br><sub>跨工具汇总每个模型的用量与成本</sub></td>
-<td width="290" align="center"><img src=".github/assets/devices-view.png" width="250" alt="设备视图"><br><sub>每台设备的用量、成本与同步状态，可展开看单机明细</sub></td>
-</tr>
-</table>
-
-<table>
-<tr>
-<td width="435" align="center"><img src=".github/assets/dashboard-overview.png" width="400" alt="使用仪表板 总览"><br><sub>跨所有设备汇总的一年活跃热力图与连续天数</sub></td>
-<td width="435" align="center"><img src=".github/assets/dashboard-trends.png" width="400" alt="使用仪表板 趋势"><br><sub>一年的每日趋势，按工具／模型堆叠，含 K 线</sub></td>
-</tr>
-</table>
-
-## 为什么用 Token Monitor？
-
-大多数用量监控工具只在它运行的那台机器上有用。Token Monitor 是为多设备工作流而设计的：每台设备监视自己的本地日志、把汇总更新发送到你的 hub，每个连接中的小部件几乎都能实时看到 Token 变化。
-
-## 功能特性
-
-### 用量追踪
-
-- **实时 Token 追踪**：Claude Code、Codex、Cursor、GitHub Copilot、Antigravity、OpenCode 等 26+ 种 AI 工具，每轮对话后 UI 在数秒内刷新（完整列表见上方表格）
-- **单个 session 明细**：点进 Claude Code、Codex 或 OpenCode 的 session，可看每条提问的 Token 消耗，并展开查看每次回复的 Token 拆分与用到的工具（打开时才实时读取本机 transcript 或数据库，绝不同步）
-- **缓存命中统计**：点击任何工具或模型，展开查看输入 Token（缓存命中与未命中）、输出 Token 的详细分类及命中率百分比
-- **成本与币别**：Token 数量旁附带成本；可用 USD、TWD、HKD 或 CNY 显示，汇率每日自动更新，也可在设置中手动覆写
-- **WSL 用量（Windows）**：运行中 WSL 发行版里的文件型用量会自动识别，约每 5 分钟并入总量；OpenCode、Hermes 等 SQLite 来源可能需要按照[指南](docs/wsl-sqlite-setup.zh-CN.md)在 WSL 内运行 headless agent
-
-### 额度、趋势与导出
-
-- **AI 工具额度检测**：涵盖 Claude Code、Codex、Cursor、OpenRouter、第三方 API、GLM、Kimi 等 21+ 家提供方的 session、每周、账单与 credits 窗口，支持多个 OpenRouter／第三方 profile，以及 DeepSeek 预付余额与消费
-- **多账号与 Codex 账号切换**：同一提供方可追踪多个账号、各自显示额度；已加入追踪的 Codex 账号还能一键切换为本机使用账号，免重新登录授权
-- **保留已删除会话用量**：许多工具会定期清除旧 session（Claude Code 默认清 30 天前的 transcript），一删就再也算不到。开启后，Token Monitor 会在本地不设期限地归档已观测到的每日工具／模型用量，让热力图与趋势即使在来源文件被清掉后仍然完整（详见下方[〈会话数据保留期〉](#会话数据保留期)）
-- **使用趋势与仪表板**：主页的活跃热力图与趋势图，加上独立的仪表板窗口，提供连续天数，以及跨所有设备、按工具／按模型堆叠的历史（柱状图与 K 线两种视图）
-- **可选的状态视图**：追踪 Claude、OpenAI、Cursor 与 DeepSeek status 页，支持手动或定时重新检查
-- **数据导出**：把使用数据导出成与工具无关的 CSV + JSON，可手动或自动写入文件夹，接电子表格、Obsidian、Grafana 或自写脚本；详见 [docs/export.md](docs/export.md)
-- **订阅资料**：手动记录每个 AI 账号的实际费用；方案标签的 tooltip 会显示费用、下次续费或到期日、已订阅时间，以及本月用量成本相对订阅费的回本倍数，定期方案与储值记录均适用
-
-### 多设备与部署
-
-- **多设备实时同步**：通过 Server-Sent Events 推送，一台设备的更新数秒内出现在其他设备
-- **本地优先**：单设备使用完全无需服务器
-- **自托管同步后端**：小部件内 hub、Node CLI hub 或 Cloudflare Worker
-- **iOS 小部件支持**：通过 Worker hub 搭配 Widgy、Scriptable
-- **隐私优先**：提示词、回复、源代码和文件内容都留在你的设备上
-
-### 界面与呈现
-
-- **分组视图**：可按工具、设备、模型、session、项目或账户额度分组查看用量
-- **菜单栏（macOS）与系统托盘（Windows）弹出窗口**：图标旁可显示成本、token 数，或最接近用完的提供方剩余额度百分比
-- **悬浮小窗模式**：可将组件收成可拖动的紧凑小窗，支持点击或悬停预览展开，并可显示托盘同款内容
-- **菜单栏排版自定义**：菜单栏与悬浮小窗的显示内容可以直接挑内置版式，也可以选“自定义…”自己排——加入 AI 工具图标、额度条、百分比、重置时间、成本或自定义文字等项目，拖动排序并实时预览，每个项目还能各自指定 AI 工具、账号、额度周期与字体
-- **外观控制**：界面主题切换（含浅色模式）、各工具厂商色、玻璃透明度、模糊度、完全透明窗口
-- **实验性原生 macOS 小部件**：仅支持 macOS 14+，提供小号、中号和大号尺寸，以及主页、额度、模型、活动和趋势页面。该功能目前仅为源码预览，不代表已随正式 Release 发布。
-- **工具列表自定义**：可隐藏、置顶和拖曳排序主列表中的工具，不影响实际追踪
-- **可录制全局快捷键**：可从任何地方快速显示或隐藏窗口
-- **Discord Rich Presence**：将今日 Token、花费与主要工具广播到你的 Discord 个人资料（需手动开启）
+账本在上传前用随机 256-bit dashboard key 进行 AES-256-GCM 加密。GitHub Pages 通过 URL fragment 中的 `#key=...` 在浏览器本地解密；fragment 不会随 HTTP 请求发送给 GitHub。
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/Javis603/token-monitor/releases) 下载。
-
-- **macOS（Apple Silicon）** — `.dmg`，已签名并 notarize
-- **macOS（Intel）** — x64 `.dmg`，已签名并 notarize
-- **Windows 10/11** — 安装版和便携版 `.exe`，均[已签名](docs/code-signing.md)
-- **Linux x64** — `.AppImage`
-
-打包版会自动检查 GitHub Releases。有新版本时，界面会显示更新提示；受支持的平台也可在 设置 → 常规 中安装更新。
-
-### 首次启动
-
-本地模式是默认模式：启动 App 后会开始追踪这台设备。无需 hub、代理或配置。
-
-## 多设备同步
-
-挑一个所有设备（与任何无头代理）都能连上的 hub 后端。在每台设备上打开小部件，在 设置 → 多设备同步 选一个模式。小部件会自动上报本机用量；只在没有小部件的机器上跑 `npm run agent`。
-
-#### 方案 A——直接在小部件内开 hub（最简单，无需命令行）
-
-在一台长期开机的机器上打开小部件，进入 设置 → 多设备同步，选 **在这台设备托管 Hub**。小部件会生成随机 secret，并列出其他设备可以连入的局域网 URL（Tailscale 或 ZeroTier 地址也会显示在这里）。在其他每台设备上选 **连接到 Hub**，把 URL 与 secret 贴进去即可。
-
-只要 Token Monitor 还在跑，hub 就会运行——退出 App（仅关闭窗口不算）会停掉 hub，所有连入的设备都会断开。
-
-#### 方案 B——自托管 Node hub（长期开机的无头机器）
+### macOS / Linux
 
 ```bash
-# 在长期开机的机器上
-cp .env.example .env
-# 把 TOKEN_MONITOR_SECRET 设为你私有的值，然后:
-npm run hub
+curl -fsSL https://raw.githubusercontent.com/Atingaii/token-monitor/main/install.sh | sh
 ```
 
-#### 方案 C——Cloudflare Worker hub（跨网络，包含 iPhone）
+### Windows PowerShell
 
-[![部署到 Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Javis603/token-monitor/tree/main/worker)
+```powershell
+irm https://raw.githubusercontent.com/Atingaii/token-monitor/main/install.ps1 | iex
+```
 
-一键部署——Cloudflare 会在过程中提示你输入 `TOKEN_MONITOR_SECRET`。或手动部署:
+安装脚本只下载对应平台的预编译二进制，不安装 Node、Python 或 Rust。
+
+## 第一个设备
+
+准备一个你有写权限的 **Public GitHub Repository**。账本本身是密文，因此仓库可以公开用于零服务器 Dashboard；GitHub Token 只需该仓库的 Contents read/write 权限。
 
 ```bash
-cd worker
-npm install
-npx wrangler login
-npx wrangler secret put TOKEN_MONITOR_SECRET
-npx wrangler deploy
+token-monitor setup --repo YOUR_NAME/YOUR_REPO
 ```
 
-把部署 URL 贴到每台设备的小部件 设置 → 多设备同步。iOS 小部件配方与端点参考见 [worker/README.md](worker/README.md)，hub HTTP API 见 [docs/API.md](docs/API.md)。
+Token 获取顺序：
 
-## App 数据
+1. `--token` 参数；
+2. `TOKEN_MONITOR_GITHUB_TOKEN` / `GITHUB_TOKEN` / `GH_TOKEN`；
+3. 已安装 `gh` 时自动读取 `gh auth token`；
+4. 终端隐藏输入。
 
-App 状态保存在系统的用户数据目录——卸载时一并删除该目录即可完整移除。
+完成后会立即进行一次全量扫描并输出：
 
-| 平台 | 路径 |
-|------|------|
-| macOS | `~/Library/Application Support/Token Monitor/` |
-| Windows | `%APPDATA%/Token Monitor/` |
-| Linux | `~/.config/Token Monitor/` |
+- Dashboard URL
+- Join Code
+- 当前设备快照分支
+- 自动同步调度器状态
 
-## 从源码构建
+## 添加其他设备
 
-如需自己从源码打包安装包，请在**对应的**操作系统上使用 Node.js 22.15+（electron-builder 无法在 Windows 上交叉构建 macOS 的 `.dmg`，反之亦然）。
+在第一台设备执行：
 
 ```bash
-npm install
-npm run dist:mac     # macOS arm64 .dmg → dist/
-npm run dist:mac:x64 # macOS Intel x64 .dmg → dist/
-npm run dist:win     # Windows x64 安装包 .exe → dist/
-npm run dist:linux   # Linux x64 AppImage → dist/
-npm run pack         # 未打包的 app 目录（无安装包），方便本机快速测试
+token-monitor join
 ```
 
-产物会放在 `dist/`。Windows 和 Linux 请在对应系统上使用上面的 `dist:*` 脚本。如果要打包 macOS 发布版，需要本机有 Developer ID Application 签名身份；本地开发或未列出的平台请用 `npm start` 运行。
+然后在 Windows / Linux / macOS 的另一台设备：
 
-运行和打包脚本会在四个 vendored 目标上明确确保使用 pinned tokscale binary。其他源码平台会保留 npm binary，并过滤它不支持的 clients；`npm install`、lint 和测试不会下载它。
+```bash
+token-monitor setup --join '<JOIN_CODE>'
+```
 
-## 工作原理
+每台设备仍需要自己的 GitHub 写入凭据，但 Join Code 会携带仓库地址、dashboard 解密 key 和同步周期，不需要重复配置统计规则。
+
+## 常用命令
+
+```bash
+token-monitor status
+token-monitor sync
+token-monitor sync --full
+token-monitor clients
+token-monitor dashboard
+token-monitor join
+token-monitor uninstall
+token-monitor uninstall --remove-remote --purge
+```
+
+`token-monitor clients` 会列出当前嵌入 Tokscale Core 支持的全部客户端。
+
+## 低负载策略
+
+默认没有常驻 daemon：
+
+- Windows：Task Scheduler
+- macOS：launchd
+- Linux：systemd user timer；不可用时回退到 cron
+
+调度器只执行 `token-monitor sync --quiet`。增量同步仅重扫最近两天，用一个小重叠窗口修正延迟写入/跨日数据；首次安装或 `--full` 才扫描完整历史。
+
+## Provider / Route Identity
+
+数据模型同时保存：
+
+- `upstreamVendor`：模型本身的厂商，例如 OpenAI / Anthropic / Google。
+- `routeProvider`：实际路由或计费提供方，例如 `openai`、`aws-bedrock`、`azure-openai`、`openrouter`、`newapi`。
+- `routeType`：`official`、`cloud`、`aggregator`、`relay`、`inference-provider`、`self-hosted`、`custom` 或 `unknown`。
+- `provider`：源会话提供的原始 provider ID，便于审计。
+
+例如同一个 Claude 模型可以分别显示为：
 
 ```text
-模式 A——本地（默认，免配置）
-    小部件 (Electron) ──▶ tokscale ──▶ ~/.claude、~/.codex、$HERMES_HOME
-
-模式 B——同步（可选，多设备）
-    设备 A agent ──▶
-    设备 B agent ──▶  hub  ──▶  任一设备上的小部件
-    设备 C agent ──▶
+claude-sonnet-4 / Anthropic / official
+claude-sonnet-4 / AWS Bedrock / cloud
+claude-sonnet-4 / OpenRouter / aggregator
 ```
 
-小部件会根据 设置 → 多设备同步 决定走本地还是同步模式。hub 本身可以是单独的 `npm run hub` 进程、Cloudflare Worker，或直接跑在某一个小部件里（Host 模式）。同步模式下，hub 通过 Server-Sent Events 把聚合后的统计推送给每个连接中的小部件，所以一台设备上的更新会在数秒内出现在其他设备上。
+同一个 GPT 模型也可以区分 OpenAI 官方、Azure、New API 中转和未知兼容端点。
 
-## 会话数据保留期
+## Web Dashboard
 
-开启**保留已删除会话用量**（设置 → 采集）后，Token Monitor 会在本地不设期限地归档已观测到的每日工具／模型用量——即使来源工具日后清掉 session，热力图与趋势也不受影响。
+Dashboard 支持：
 
-<details>
-<summary><strong>进阶：延长来源工具本身的保留期</strong></summary>
+- 今日 / 7 天 / 30 天 / 本月 / 全部 / 自定义日期
+- 设备、客户端、模型、模型厂商、路由提供商、路由类型、原始 Provider、Tier 联动筛选
+- Total / Input / Cache Read / Cache Write / Output / Reasoning / Messages / Sessions / Duration / Cost 指标
+- 折线、面积、柱状、堆叠柱、环形、Treemap、表格
+- CSV 导出
+- Light / Dark
 
-<br>
+整个页面是静态 HTML/CSS/JavaScript，无后端。
 
-热力图与同步数据采用 370 天的滚动窗口（更早的观测数据仍保留在本地供日后查看）。**Claude Code 默认只保留 30 天的 transcript**（`cleanupPeriodDays`）；若想在归档启用前就保住完整的滚动年份，请在时限过去之前于 `~/.claude/settings.json` 调高：
+## 测试
 
-```json
-{
-  "cleanupPeriodDays": 370
-}
-```
+CI 包含：
 
-设更大能留更多，代价是 transcript 会按你设定的期限一直留在磁盘上。其他工具的默认值与配置文件路径，请见 tokscale 的 [Session Data Retention](https://github.com/junhoyeo/tokscale#session-data-retention) 表。
+- Windows / macOS / Linux：Rust 单元测试、Release 编译、CLI smoke test。
+- Web：JavaScript 语法检查和筛选/聚合/Provider/CSV 单测。
+- Tokscale Core：固定 revision 的完整 parser/scanner 测试套件，用于覆盖其大量 AI coding 客户端。
+- Release：Linux x86_64/aarch64、macOS x86_64/aarch64、Windows x86_64/aarch64 二进制构建。
 
-这份归档只涵盖 Token Monitor 已观测过的日期；在它开始追踪之前就被删除的数据无法找回。
+## 上游与许可证
 
-</details>
-
-## 设置
-
-设置分两处，日常使用只需要前者：
-
-- **小部件（GUI）**——点右下角的 `⚙` 打开，分区依次为：常规（语言、登录启动、更新）、主画面（首页模块与显示币别）、窗口（窗口行为、菜单栏与悬浮小窗排版、托盘模式、快捷键）、外观（主题与厂商色）、采集（追踪的工具、采集频率、保留已删除会话用量、数据导出）、AI 工具额度（提供方选择、额度与凭据）、订阅资料（每个账号实际付多少）、多设备同步。标题栏的 `⇧` 按钮可循环切换窗口行为。
-- **无头代理与 hub**——没有 UI，用项目根目录的 `.env` 配置（从 `.env.example` 复制）；优先级为 CLI 参数 → 环境变量 → 内置默认。
-
-每一项设置与所有环境变量的完整说明，请见[设置参考文档](docs/configuration.md)。
-
-## 隐私
-
-Token Monitor 在本地处理使用日志，不会向项目维护者发送分析或遥测数据。网络访问仅用于文档所述或由用户启用的功能；更新、提供方集成、Discord Rich Presence 与可选多设备同步所使用的数据，请参阅[隐私政策](docs/privacy.md)。
-
-## Star 历史
-
-<a href="https://github.com/Javis603/token-monitor/tree/star-history">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Javis603/token-monitor/star-history/star-history-dark.svg" />
-   <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Javis603/token-monitor/star-history/star-history.svg" />
-   <img alt="Star History Chart" src="https://raw.githubusercontent.com/Javis603/token-monitor/star-history/star-history.svg" />
- </picture>
-</a>
-
-## 参与贡献
-
-欢迎提交 Issue 和 PR。项目规范、架构说明和命令参考都在 [AGENTS.md](AGENTS.md) 中——它是为编码代理编写的，但同样可以作为贡献者指南。
-
-## 致谢
-
-- [tokscale](https://github.com/junhoyeo/tokscale) 提供日志解析与 Token 计算。
-- [CodexBar](https://github.com/steipete/CodexBar) 提供 AI 工具额度的研究参考。
-- [代码签名政策](docs/code-signing.md)： 免费代码签名由 [SignPath.io](https://signpath.io/) 提供，证书由 [SignPath Foundation](https://signpath.org/) 提供。
-
-## 许可证
-
-[MIT](LICENSE) © [@Javis](https://github.com/Javis603)
+本项目由 `Javis603/token-monitor` fork 后针对 serverless cross-device 场景重构，并使用 `junhoyeo/tokscale` 的 Rust Core 作为多客户端扫描/定价底座。保留原项目 MIT License 与版权声明；Tokscale 依赖同样按其许可证使用。
