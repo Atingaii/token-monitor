@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Additive metrics only. Every field can be safely summed across
+/// date/model/provider/device rows. Non-additive values such as distinct session
+/// count intentionally do not live here.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Metrics {
     pub input: i64,
@@ -9,7 +12,6 @@ pub struct Metrics {
     pub cache_write: i64,
     pub reasoning: i64,
     pub messages: i32,
-    pub sessions: i32,
     pub duration_ms: i64,
     pub cost_usd: f64,
 }
@@ -30,13 +32,12 @@ impl Metrics {
         self.cache_write = self.cache_write.saturating_add(other.cache_write);
         self.reasoning = self.reasoning.saturating_add(other.reasoning);
         self.messages = self.messages.saturating_add(other.messages);
-        self.sessions = self.sessions.saturating_add(other.sessions);
         self.duration_ms = self.duration_ms.saturating_add(other.duration_ms);
         self.cost_usd += other.cost_usd;
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageRow {
     pub date: String,
@@ -47,16 +48,20 @@ pub struct UsageRow {
     pub upstream_vendor: String,
     /// Normalized routing/billing provider (official vendor, AWS Bedrock, Azure, OpenRouter, relay, etc.).
     pub route_provider: String,
-    /// One of official, cloud, relay, self-hosted, unknown.
+    /// One of official, cloud, aggregator, relay, inference-provider, self-hosted, custom, unknown.
     pub route_type: String,
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tier: Option<String>,
+    /// `true` only when a specialized source could prove that this row's cost
+    /// is a lower bound (for example missing Codex cache-write counts).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cost_lower_bound: bool,
     #[serde(flatten)]
     pub metrics: Metrics,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceInfo {
     pub id: String,
@@ -67,7 +72,7 @@ pub struct DeviceInfo {
     pub app_version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Ledger {
     pub schema_version: u32,
