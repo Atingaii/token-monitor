@@ -1,0 +1,65 @@
+name: Rust CLI CI
+
+on:
+  push:
+    branches: [main, feat/github-ledger-pages]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cli-matrix:
+    name: CLI / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Unit tests
+        run: cargo test --manifest-path rust-cli/Cargo.toml --all-targets
+      - name: Release build smoke test
+        run: cargo build --release --manifest-path rust-cli/Cargo.toml
+      - name: CLI surface smoke test
+        shell: bash
+        run: |
+          ./rust-cli/target/release/token-monitor --version || ./rust-cli/target/release/token-monitor.exe --version
+          ./rust-cli/target/release/token-monitor clients || ./rust-cli/target/release/token-monitor.exe clients
+
+  rust-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --manifest-path rust-cli/Cargo.toml --all-targets
+
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: JavaScript syntax
+        run: |
+          node --check web/analytics.js
+          node --check web/app.js
+      - name: Analytics unit tests
+        run: node web/analytics.test.cjs
+      - name: Privacy regression checks
+        run: |
+          ! grep -R -i -E 'auth\.json|prompt[^a-z]|assistant response|api[_ -]?key' web/*.js || (echo 'Dashboard code must not depend on private session payloads' && exit 1)
+
+  upstream-parser-suite:
+    name: Tokscale parser regression suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: junhoyeo/tokscale
+          ref: 1ec865d4e9e5adf157efb9f5c2dfaf29630d71e5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run all tokscale-core parser/scanner tests
+        run: cargo test -p tokscale-core --all-targets
