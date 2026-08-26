@@ -1,0 +1,18 @@
+Token Monitor serverless CLI rewrite
+Copyright (c) 2026 Atingaii contributors
+
+This repository was forked from:
+  Javis603/token-monitor
+  https://github.com/Javis603/token-monitor
+  MIT License, Copyright (c) 2026 Javis
+
+The CLI uses the Rust core library from:
+  junhoyeo/tokscale
+  https://github.com/junhoyeo/tokscale
+  pinned to commit 1ec865d4e9e5adf157efb9f5c2dfaf29630d71e5
+
+Tokscale provides the multi-client local session parsers, scanners, aggregation
+primitives, canonical model normalization, and pricing engine used by this
+rewrite. No raw session content is intentionally uploaded by Token Monitor;
+only normalized aggregate statistics generated locally are included in the
+encrypted device ledger.
