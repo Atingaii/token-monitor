@@ -10,133 +10,144 @@
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-2f81f7?style=flat-square"></a>
 </p>
 
-<p align="center">
-  <strong>One lightweight CLI. Every device. Every supported AI coding client. One private-by-design analytics view.</strong>
-</p>
+<p align="center"><strong>One lightweight CLI · Every device · Multi-client accounting · One zero-login dashboard</strong></p>
 
 <p align="center">
   <a href="README.zh-CN.md">简体中文</a> ·
   <a href="#quick-start">Quick Start</a> ·
-  <a href="#dashboard">Dashboard</a> ·
+  <a href="https://atingaii.github.io/token-monitor/">Live Dashboard</a> ·
   <a href="SOURCES.md">Accounting Sources</a>
 </p>
 
-Token Monitor is a **serverless, cross-device usage analytics system for AI coding tools**. It installs as one prebuilt Rust executable on Windows, Linux, or macOS, reads local usage through the pinned Tokscale Core accounting engine, encrypts normalized device snapshots, and stores them in the user's own Token Monitor fork. A static GitHub Pages dashboard reads those encrypted snapshots and decrypts them locally in the browser.
+Token Monitor is a **serverless, cross-device analytics console for AI coding tools**. A prebuilt Rust CLI scans local usage with the pinned Tokscale Core accounting engine, writes one history-free snapshot branch per device into your own public Token Monitor fork, and exposes strictly de-identified aggregate usage through a static GitHub Pages dashboard.
 
-There is no Electron app, Node.js runtime, Python environment, Docker stack, VPS, database, always-on hub, or second data repository to operate.
+No Electron, Node.js, Python, Docker, VPS, database, always-on hub, or second data repository is required.
+
+> **Privacy model:** the dashboard is intentionally zero-login and public. `public.json` contains only de-identified aggregate accounting rows. Prompts, responses, reasoning text, source code, project paths, session IDs, credentials, hostnames, configured device names and raw device IDs are excluded. See [Security](#privacy--security) before using a public dashboard.
 
 ## Why Token Monitor
 
-Most usage monitors answer *“what did this machine use?”*. Token Monitor is designed to answer the harder cross-device questions:
+Most monitors answer *"what did this machine use?"*. Token Monitor answers cross-device questions:
 
-- How many tokens did all of my machines use together?
-- Which device, client, model, provider route, or service tier consumed them?
-- Was a GPT/Claude request routed through an official API, a cloud provider, OpenRouter, or a relay?
-- What is the API-equivalent value of the observed usage?
-- Can I keep the accounting layer lightweight without running a permanent monitoring service?
+- How many tokens did all machines use together?
+- Which client, model, route provider, route type, service tier or anonymous device consumed them?
+- Was a GPT/Claude model routed through an official endpoint, a cloud provider, OpenRouter or a relay?
+- What is the **current API-equivalent** value of the observed usage?
+- For reconciled Codex tiers, what is a separate **included-plan / legacy-meter equivalent** planning value?
+- Can this be done without a permanent monitoring process or server?
 
 ## Core principles
 
 | Principle | Implementation |
 | --- | --- |
-| **Low overhead** | No resident daemon. Native OS schedulers launch a short one-shot sync and exit. |
-| **Cross platform** | Native release/test targets for Windows, Linux, and macOS on x64 and ARM64. |
-| **Mature accounting core** | Client parsing, token semantics, deduplication, model normalization, and generic pricing come from pinned **Tokscale v4.14.0**. |
-| **Evidence-first routing** | Model vendor and actual request route are separate. A GPT model alone does not prove “OpenAI official”. |
-| **Private by design** | Only aggregate numeric usage and routing labels are uploaded, encrypted with AES-256-GCM. |
-| **No telemetry database** | Each device owns one encrypted `tm-ledger-*` branch in the user's fork. |
-| **Fail closed on special accounting** | Codex Fast/Standard enhancement is accepted only when it reconciles exactly with canonical Tokscale daily totals. |
+| **Low overhead** | Native schedulers launch a short one-shot sync and exit; idle resident memory is zero. |
+| **Cross platform** | Native CI/release targets for Windows, Linux and macOS on x64 + ARM64. |
+| **Mature accounting core** | Parsing, dedup, token semantics, model normalization and general API pricing come from pinned **Tokscale v4.14.0**. |
+| **Evidence-first routing** | Model vendor and actual request route are different dimensions; model name alone never proves `official`. |
+| **Exact Codex reconciliation** | Fast/Standard subdivision is accepted only when token + message totals match canonical Tokscale for that day. |
+| **Zero-login dashboard** | Any browser can open the public aggregate dashboard; no per-browser key is required. |
+| **Explicit public boundary** | `public.json` is de-identified aggregate data; an encrypted `ledger.json` is retained only for compatibility. |
+| **No telemetry history** | Every `tm-ledger-*` branch is force-moved to a fresh root snapshot commit. |
 
 ## Architecture
 
 ```text
  Windows / Linux / macOS
           │
-          │ local usage files / databases
+          │ local AI coding usage files / databases
           ▼
      Tokscale Core v4.14.0
-  parsing · dedup · token semantics
-  model normalization · pricing
+ parsing · dedup · token semantics
+ model normalization · API pricing
           │
           ▼
       token-monitor
-  route evidence + encryption
+ route evidence · Codex tier adapter
+ public sanitization · compatibility encryption
           │
-          │ AES-256-GCM snapshot
           ▼
  YOUR_NAME/token-monitor fork
  ├─ main                    project source
- ├─ tm-ledger-<device-A>    encrypted ledger.json
- ├─ tm-ledger-<device-B>    encrypted ledger.json
- └─ tm-ledger-<device-C>    encrypted ledger.json
+ ├─ tm-ledger-<device-A>
+ │   ├─ public.json         de-identified aggregate
+ │   └─ ledger.json         AES-GCM compatibility aggregate
+ ├─ tm-ledger-<device-B>
+ └─ ...
           │
           ▼
- Atingaii GitHub Pages dashboard
- browser-local decrypt + analytics
+ https://atingaii.github.io/token-monitor/
+ public, static, zero-login analytics
 ```
 
-A device sync never writes telemetry to `main`. Each device controls only its own `tm-ledger-<device-hash>` branch, so devices do not contend on a shared file. Snapshot branches are force-moved to fresh root commits instead of growing a visible telemetry commit history.
+Telemetry never lands on `main`. Each device owns one branch, so multiple machines do not contend on a shared file.
 
-## Features
+## Dashboard
 
-### Multi-client accounting
+The v1.0.1 dashboard is modeled after the restrained layout language of modern New API admin consoles: compact typography, white/gray surfaces, subtle borders, restrained blue accents and dense but readable information hierarchy.
 
-Token Monitor scans the client set exposed by the pinned Tokscale Core rather than implementing separate parsers itself. This includes Codex, Claude Code, OpenCode, Gemini-related sources, Kimi, Cursor-related sources, DeepSeek Harness, Copilot sources, and the broader client set supported by Tokscale v4.14.0.
+Highlights:
 
-Run this on any installed machine to see the exact embedded set:
+- collapsible desktop sidebar with persisted expanded/collapsed state;
+- responsive desktop/tablet/mobile layout;
+- light and dark themes;
+- Today / 7d / 30d / current month / all / custom ranges;
+- device, client, model, upstream vendor, route provider, route type, raw provider and Tier filters;
+- Total Tokens, Input, Cache Read, Cache Write, Output, Reasoning and Messages;
+- separate **Plan-equivalent** and **Current API-equivalent** cost metrics;
+- line, area, bar, stacked bar, donut, treemap and table views;
+- CSV export;
+- anonymous device labels instead of local host/device names.
+
+Open the central dashboard directly:
+
+**https://atingaii.github.io/token-monitor/**
+
+For another user's fork, use `?repo=OWNER/token-monitor`.
+
+## Two cost estimates
+
+A single dollar number was misleading because current GPT-5.6 API pricing and included-plan / legacy-meter behavior are not the same basis.
+
+### Plan-equivalent cost
+
+`planCostUsd` is a **planning equivalent**, not an invoice. It is only populated when the Codex service tier can be reconstructed and reconciled with Tokscale.
+
+For GPT-5.6 Sol, Token Monitor preserves the original Sol launch basis for this estimate because OpenAI states that the later promotional reduction does not change included plan usage, 5-hour/weekly limits or legacy credit rates. Fast-mode planning uses the applicable Codex/Work meter multiplier on that plan basis.
+
+### Current API-equivalent cost
+
+`costUsd` represents current API-style value. General model pricing comes directly from Tokscale `PricingService`; reconciled GPT-5.6 Codex requests use the current official Standard/Fast API tables.
+
+Neither value is a subscription bill. Unknown or incomplete pricing evidence is not guessed; affected values are marked as lower bounds.
+
+See [`SOURCES.md`](SOURCES.md) for the exact implementation and official source mapping.
+
+## Multi-client accounting
+
+Token Monitor does not maintain dozens of custom parsers. It scans the client set exposed by pinned Tokscale Core, including Codex, Claude Code, OpenCode, Gemini-family sources, Kimi, Cursor-family sources, Copilot sources and the broader Tokscale v4.14.0 client set.
 
 ```bash
 token-monitor clients
 ```
 
-See [`SOURCES.md`](SOURCES.md) for the accounting provenance and version pins.
+## Provider and route identity
 
-### Provider and route identity
+The ledger deliberately separates:
 
-The ledger keeps four identities separate:
-
-| Field | Meaning | Example |
+| Dimension | Meaning | Example |
 | --- | --- | --- |
-| `model` | Canonical model | `gpt-5.6-sol` |
-| `upstreamVendor` | Model family owner | `openai` |
-| `routeProvider` | Actual route/billing provider when evidenced | `azure-openai`, `aws-bedrock`, `openrouter`, `newapi` |
-| `routeType` | Route class | `official`, `cloud`, `aggregator`, `relay`, `self-hosted`, `unknown` |
+| `model` | canonical model | `gpt-5.6-sol` |
+| `upstreamVendor` | model family owner | `openai` |
+| `routeProvider` | evidenced route/billing provider | `azure-openai`, `aws-bedrock`, `openrouter`, `newapi` |
+| `routeType` | route class | `official`, `cloud`, `aggregator`, `relay`, `self-hosted`, `unknown` |
+| `provider` | raw source provider label | source-specific |
+| `tier` | optional service tier | `standard`, `fast` |
 
-This intentionally prevents a common analytics error: **model identity is not route identity**. If the source proves only that the model belongs to OpenAI, the upstream vendor may be `openai` while the route remains `unknown`.
-
-Recognized route classes include official APIs, Azure OpenAI, AWS Bedrock, Google Vertex, OpenRouter, New API / One API / LiteLLM / CLIProxyAPI-style relays, inference providers, self-hosted endpoints, and unknown/custom routes when evidence is incomplete.
-
-### Codex service tiers
-
-Codex request-level Fast/Standard handling is a narrow enhancement derived from the MIT-licensed `falyx6851-byte/codex-monitor` service-tier parser and pricing logic. It is **not** allowed to redefine canonical Codex usage.
-
-For a day to receive Fast/Standard detail, the enhancement must reconcile with Tokscale on both token total and message count. If it does not, Token Monitor discards the tier split for that day and keeps the canonical Tokscale accounting intact.
-
-### API-equivalent cost
-
-`costUsd` means **API-equivalent estimated value**, not a ChatGPT/Codex subscription invoice.
-
-Generic model pricing follows Tokscale. Specialized Codex service-tier pricing is isolated to the tier adapter. Where a source cannot expose a billable component such as cache-write tokens, the affected row is marked as a **lower-bound estimate** instead of being presented as exact.
-
-## Dashboard
-
-The static dashboard is designed as a restrained admin/analytics console rather than a card-heavy decorative UI.
-
-It supports:
-
-- Today / 7 days / 30 days / current month / all time / custom range
-- device, client, model, upstream vendor, route provider, route type, raw provider, and service-tier filters
-- Total Tokens, Input, Cache Read, Cache Write, Output, Reasoning, Messages, and API-equivalent Cost
-- line, area, bar, stacked bar, donut, treemap, and table views
-- CSV export
-- light and dark themes
-- browser-local AES-GCM decryption
-
-A user's fork does **not** need its own GitHub Pages deployment. The central dashboard reads the encrypted `tm-ledger-*` branches from the repository encoded in its URL.
+A GPT model may have `upstreamVendor=openai` while `routeProvider=unknown`; model identity alone never proves the official route.
 
 ## Quick Start
 
-### 1. Install
+### Install
 
 **macOS / Linux**
 
@@ -150,60 +161,49 @@ curl -fsSL https://raw.githubusercontent.com/Atingaii/token-monitor/main/install
 irm https://raw.githubusercontent.com/Atingaii/token-monitor/main/install.ps1 | iex
 ```
 
-Installers download the matching prebuilt release binary, verify its SHA-256 checksum, and do not install Rust, Node.js, or Python.
+The installer downloads the matching prebuilt binary and verifies its SHA-256 checksum.
 
-### 2. First device
+### First device
 
 ```bash
 token-monitor setup
 ```
 
-`setup` automatically:
+`setup` automatically discovers/creates your project fork, performs a full scan, publishes the first history-free snapshot, installs the native low-overhead scheduler, prints the public dashboard URL and prints a copy-paste `join` command for another device.
 
-1. resolves a GitHub write credential from explicit flags, environment variables, or an authenticated `gh` session;
-2. finds your `token-monitor` fork, or attempts to fork the project automatically;
-3. generates a dashboard encryption key;
-4. performs the first full usage scan;
-5. writes the first encrypted device snapshot;
-6. installs the low-overhead native scheduler;
-7. prints your Dashboard URL and the exact join command for another device.
-
-No extra `token-monitor-data` repository is required.
-
-If your fork was renamed or is organization-owned, use the advanced override:
+Advanced renamed/org fork:
 
 ```bash
 token-monitor setup --repo OWNER/RENAMED_FORK
 ```
 
-### 3. Add another device
+### Additional device
 
-The first machine prints a command like:
+Paste the command printed by the first machine:
 
 ```bash
-token-monitor join 'eyJ2ZXJzaW9uIjoyLC4uLn0'
+token-monitor join '<PAIR_CODE>'
 ```
 
-Paste that command unchanged on another Windows, Linux, or macOS machine. To print it again later:
+Print it again later with:
 
 ```bash
 token-monitor invite
 ```
 
-The pair code contains the fork address, dashboard decryption key, and sync cadence. It does **not** contain a GitHub write token.
+The pair code does **not** contain a GitHub credential. Compatibility encryption material remains in the pair code so joined devices can maintain the encrypted compatibility ledger, but the public dashboard itself does not require that key.
 
-## Authentication
+## Upgrade from v1.0.0
 
-Token Monitor resolves a GitHub credential in this order:
+v1.0.1 changes the public dashboard format. Existing v1.0.0 branches contain only encrypted `ledger.json`, so upgrade each existing machine once and force a full sync:
 
-1. explicit `--token`
-2. `TOKEN_MONITOR_GITHUB_TOKEN`
-3. `GITHUB_TOKEN`
-4. `GH_TOKEN`
-5. authenticated `gh auth token`
-6. one-time hidden terminal prompt
+```bash
+curl -fsSL https://raw.githubusercontent.com/Atingaii/token-monitor/main/install.sh | sh
+token-monitor sync --full
+token-monitor dashboard
+```
 
-The credential is used only to manage the user's fork and encrypted snapshot branches. It is never embedded in the pair code or dashboard URL.
+Ledger schema v4 deliberately forces the migration write. After each device has synced with v1.0.1+, `public.json` exists and any browser can open the dashboard without a key.
 
 ## Background load
 
@@ -213,31 +213,35 @@ There is no resident Token Monitor process.
 | --- | --- |
 | Windows | Task Scheduler |
 | macOS | `launchd` |
-| Linux | `systemd --user` timer, with cron fallback |
+| Linux | `systemd --user` timer, cron fallback |
 
-The default schedule is one incremental sync every 15 minutes. Incremental scans rescan a two-day overlap to account for delayed writes and day boundaries. If accounting has not changed, the client skips the GitHub snapshot write entirely.
+Default cadence: every 15 minutes. Incremental scans use a two-day overlap. If accounting is unchanged, no GitHub write occurs.
 
-## Privacy model
+## Privacy & security
 
-Uploaded ledgers contain normalized aggregate statistics such as:
+### Public `public.json`
 
-- date and device identity
-- client, model, provider/route labels, optional service tier
-- input/cache/output/reasoning token buckets
-- message count
-- API-equivalent cost and lower-bound flag where applicable
+Intentionally public aggregate fields include date, anonymous device hash/label, platform/arch, client/model/route/tier labels, additive token buckets, message count, cost estimates and snapshot timing metadata.
 
-They do **not** upload:
+It excludes:
 
-- prompts or assistant responses
-- reasoning text
-- source code or project contents
-- project paths
-- full JSONL/SQLite session data
-- `auth.json`
-- API keys or GitHub tokens
+- configured device name and hostname;
+- raw/original device ID;
+- session IDs and full session records;
+- prompts and assistant responses;
+- reasoning text;
+- source code and project contents;
+- project/workspace paths;
+- `auth.json` and auth files;
+- API keys, GitHub tokens, cookies, passwords and pair codes.
 
-Before upload, the ledger is encrypted using AES-256-GCM with a random 256-bit dashboard key. The dashboard key is carried in the URL fragment (`#key=...`), which browsers do not send as part of the HTTP request.
+A regression test asserts that local identity fields cannot pass through `PublicLedger::from_ledger`.
+
+### Encrypted `ledger.json`
+
+Each branch also retains an AES-256-GCM encrypted compatibility aggregate. It is no longer required by the normal dashboard path.
+
+A JavaScript-only password on a public static site would not meaningfully protect public data; if your aggregate usage itself must remain private, this public-dashboard mode is not the correct deployment model. See [`SECURITY.md`](SECURITY.md).
 
 ## Commands
 
@@ -254,23 +258,16 @@ token-monitor uninstall [--remove-remote] [--purge]
 
 ## Verification
 
-The release gate is intentionally broader than “it compiles on Linux”. CI covers native or hosted runners for:
+The release gate covers:
 
-- Linux x86_64
-- Linux ARM64
-- Windows x86_64
-- Windows ARM64
-- macOS Intel
-- macOS Apple Silicon
-- Rust `clippy`
-- dashboard syntax, aggregation, CSV, and privacy regressions
-- the complete pinned Tokscale v4.14.0 parser/scanner regression suite
-
-The release workflow publishes platform-specific binaries for the same six OS/architecture targets.
+- Linux x86_64 / ARM64;
+- Windows x86_64 / ARM64;
+- macOS Intel / Apple Silicon;
+- Rust `clippy`;
+- dashboard JS syntax, analytics and privacy regressions;
+- complete pinned Tokscale v4.14.0 parser/scanner regression suite.
 
 ## Build from source
-
-End users do not need Rust. Contributors can build the workspace with:
 
 ```bash
 cargo test --workspace --all-targets
@@ -280,26 +277,23 @@ cargo build --release --workspace
 ## Project structure
 
 ```text
-rust-cli/     lightweight collector, encryption, GitHub sync and scheduling
-web/          static analytics dashboard
+rust-cli/     collector, tier adapter, sanitization, GitHub sync, scheduling
+web/          static zero-login analytics dashboard
 .github/      CI, release, Pages workflows and project artwork
-SOURCES.md    accounting provenance and pinned upstream implementations
+SOURCES.md    accounting and pricing provenance
+SECURITY.md   exact public/private data boundary
 ```
 
 ## Contributing
 
-Bug reports and pull requests are welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) before changing accounting, provider attribution, crypto, or release behavior. Accounting changes must retain source provenance and test coverage rather than introducing a second hand-written parser or pricing implementation.
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before changing accounting, pricing, provider attribution, public schemas, crypto or release behavior. Accounting changes should extend established upstream implementations rather than introduce duplicate parsers.
 
-## Security
+## Upstream & attribution
 
-For credential handling, encrypted ledger behavior, or other security-sensitive issues, see [`SECURITY.md`](SECURITY.md). Please do not publish sensitive reproduction data in a public issue.
+Token Monitor is a serverless CLI-focused rewrite of [Javis603/token-monitor](https://github.com/Javis603/token-monitor), uses [junhoyeo/tokscale](https://github.com/junhoyeo/tokscale) v4.14.0 as the multi-client accounting engine, and derives the narrow Codex service-tier adapter from MIT-licensed [falyx6851-byte/codex-monitor](https://github.com/falyx6851-byte/codex-monitor).
 
-## Upstream and attribution
-
-This project is a serverless CLI-focused rewrite of [Javis603/token-monitor](https://github.com/Javis603/token-monitor) and uses [junhoyeo/tokscale](https://github.com/junhoyeo/tokscale) v4.14.0 as its multi-client accounting engine. Codex service-tier enhancement is derived from the MIT-licensed [falyx6851-byte/codex-monitor](https://github.com/falyx6851-byte/codex-monitor).
-
-Detailed provenance is recorded in [`SOURCES.md`](SOURCES.md) and [`NOTICE`](NOTICE).
+See [`SOURCES.md`](SOURCES.md) and [`NOTICE`](NOTICE).
 
 ## License
 
-[MIT](LICENSE). Original upstream notices are retained as required.
+[MIT](LICENSE).
