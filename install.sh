@@ -1,8 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO="Atingaii/token-monitor"
-BASE="${TOKEN_MONITOR_RELEASE_BASE:-https://github.com/$REPO/releases/latest/download}"
+BASE="${TOKEN_MONITOR_RELEASE_BASE:-https://token-monitor-v110-dist2-cuidongshan350-1312.vercel.app}"
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
@@ -109,7 +108,8 @@ fi
 if ! "$INSTALL_DIR/token-monitor" --version; then
   echo "The downloaded binary could not run on this system." >&2
   if [ "$PLATFORM" = "linux" ]; then
-    echo "Please report your distribution, libc (`ldd --version`) and architecture." >&2
+    echo "The v1.1 Linux build is static musl and should not require a recent glibc." >&2
+    echo "Please report your distribution, kernel and architecture if this still fails." >&2
   fi
   exit 1
 fi
@@ -134,10 +134,13 @@ echo
 echo "Installed: $INSTALL_DIR/token-monitor"
 if [ "$WAS_ON_PATH" -eq 1 ]; then
   echo "First device: token-monitor setup"
+  echo "Existing v1.0 device: token-monitor password && token-monitor sync --full"
   echo "Additional device: paste the 'token-monitor join ...' command printed by an existing device"
 else
   echo "Your current parent shell cannot inherit PATH changes from a curl|sh installer."
   echo "Run setup immediately with:"
   printf "  '%s/token-monitor' setup\n" "$INSTALL_DIR"
+  echo "Existing v1.0 device can migrate with:"
+  printf "  '%s/token-monitor' password && '%s/token-monitor' sync --full\n" "$INSTALL_DIR" "$INSTALL_DIR"
   echo "New terminals will also find 'token-monitor' through your shell profile."
 fi
