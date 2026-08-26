@@ -10,15 +10,29 @@ permissions:
 
 jobs:
   cli-matrix:
-    name: CLI / ${{ matrix.os }}
+    name: CLI / ${{ matrix.label }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - label: linux-x64
+            os: ubuntu-latest
+          - label: linux-arm64
+            os: ubuntu-24.04-arm
+          - label: windows-x64
+            os: windows-latest
+          - label: windows-arm64
+            os: windows-11-arm
+          - label: macos-arm64
+            os: macos-latest
+          - label: macos-x64
+            os: macos-15-intel
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Platform evidence
+        run: rustc -vV
       - name: Validate Unix installer syntax
         if: runner.os != 'Windows'
         shell: bash
@@ -38,16 +52,18 @@ jobs:
         run: cargo test --workspace --all-targets
       - name: Release build smoke test
         run: cargo build --release --workspace
-      - name: CLI surface smoke test
+      - name: CLI surface smoke test (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
-          if [ -x ./target/release/token-monitor ]; then
-            ./target/release/token-monitor --version
-            ./target/release/token-monitor clients
-          else
-            ./target/release/token-monitor.exe --version
-            ./target/release/token-monitor.exe clients
-          fi
+          ./target/release/token-monitor --version
+          ./target/release/token-monitor clients
+      - name: CLI surface smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./target/release/token-monitor.exe --version
+          ./target/release/token-monitor.exe clients
 
   rust-quality:
     runs-on: ubuntu-latest
