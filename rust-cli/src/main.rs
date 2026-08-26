@@ -87,13 +87,17 @@ fn resolve_token(explicit: Option<String>) -> Result<String> {
     }
     for key in ["TOKEN_MONITOR_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"] {
         if let Ok(token) = std::env::var(key) {
-            if !token.trim().is_empty() { return Ok(token.trim().to_string()); }
+            if !token.trim().is_empty() {
+                return Ok(token.trim().to_string());
+            }
         }
     }
     if let Ok(output) = Command::new("gh").args(["auth", "token"]).output() {
         if output.status.success() {
             let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !token.is_empty() { return Ok(token); }
+            if !token.is_empty() {
+                return Ok(token);
+            }
         }
     }
     let token = rpassword::prompt_password("GitHub token (input hidden; one-time setup only): ")?;
@@ -117,14 +121,36 @@ fn device_info(config: &Config) -> DeviceInfo {
 fn run_sync(full: bool, quiet: bool) -> Result<()> {
     let config = config::load()?;
     let previous = config::read_cached_ledger()?;
+    let previous_for_compare = previous.clone();
+
     let (ledger, mode) = if full || previous.is_none() {
         (collector::collect(device_info(&config), None)?, "full")
     } else {
-        let since = (Local::now().date_naive() - Duration::days(2)).format("%Y-%m-%d").to_string();
+        let since = (Local::now().date_naive() - Duration::days(2))
+            .format("%Y-%m-%d")
+            .to_string();
         let partial = collector::collect(device_info(&config), Some(since.clone()))?;
-        (collector::merge_incremental(previous.unwrap(), partial, &since), "incremental")
+        (
+            collector::merge_incremental(previous.expect("checked above"), partial, &since),
+            "incremental",
+        )
     };
+
+    // Keep the fresh scan locally even when no remote write is needed. The
+    // scheduled process then exits without network mutation: idle devices create
+    // zero GitHub commits/refs and consume zero resident memory between runs.
     config::write_cached_ledger(&ledger)?;
+    if previous_for_compare
+        .as_ref()
+        .is_some_and(|previous| collector::same_accounting(previous, &ledger))
+    {
+        if !quiet {
+            println!("No usage changes on {}; GitHub snapshot unchanged.", config.device_name);
+            println!("  Scan: {} ms", ledger.scan_ms);
+        }
+        return Ok(());
+    }
+
     let envelope = crypto::encrypt_ledger(&ledger, &config.dashboard_key)?;
     let github = GithubClient::new(config.repo.clone(), config.github_token.clone())?;
     let branch = github.replace_snapshot(&config.device_id, &envelope)?;
@@ -162,13 +188,20 @@ fn finish_onboarding(config: &Config, no_schedule: bool) -> Result<()> {
     Ok(())
 }
 
-fn setup(repo: Option<String>, token: Option<String>, device: Option<String>, interval: u32, no_schedule: bool) -> Result<()> {
+fn setup(
+    repo: Option<String>,
+    token: Option<String>,
+    device: Option<String>,
+    interval: u32,
+    no_schedule: bool,
+) -> Result<()> {
     let token = resolve_token(token)?;
     let repo = match repo {
         Some(repo) => config::normalize_repo(&repo)?,
         None => {
             println!("Finding your Token Monitor fork on GitHub...");
-            github::ensure_user_fork(&token).context("could not automatically prepare your Token Monitor fork")?
+            github::ensure_user_fork(&token)
+                .context("could not automatically prepare your Token Monitor fork")?
         }
     };
     let config = config::new_config(&repo, token, device, interval)?;
@@ -180,7 +213,12 @@ fn setup(repo: Option<String>, token: Option<String>, device: Option<String>, in
     finish_onboarding(&config, no_schedule)
 }
 
-fn join(code: String, token: Option<String>, device: Option<String>, no_schedule: bool) -> Result<()> {
+fn join(
+    code: String,
+    token: Option<String>,
+    device: Option<String>,
+    no_schedule: bool,
+) -> Result<()> {
     let token = resolve_token(token)?;
     let config = config::from_join(&code, token, device)?;
     GithubClient::new(config.repo.clone(), config.github_token.clone())?
@@ -194,18 +232,23 @@ fn join(code: String, token: Option<String>, device: Option<String>, no_schedule
 fn status() -> Result<()> {
     let config = config::load()?;
     println!("Token Monitor {}", env!("CARGO_PKG_VERSION"));
-    println!("Device: {} ({}/{})", config.device_name, std::env::consts::OS, std::env::consts::ARCH);
+    println!(
+        "Device: {} ({}/{})",
+        config.device_name,
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
     println!("Workspace fork: {}", config.repo);
     println!("Snapshot branch: {}", GithubClient::snapshot_branch(&config.device_id));
     println!("Interval: {} minutes", config.interval_minutes);
     if let Some(ledger) = config::read_cached_ledger()? {
-        println!("Last sync: {}", ledger.generated_at);
+        println!("Last scan: {}", ledger.generated_at);
         println!("Tokens: {}", ledger.totals.total_tokens());
         println!("API-equivalent cost: ${:.2}", ledger.totals.cost_usd);
         println!("Rows: {}", ledger.rows.len());
-        println!("Last scan: {} ms wall time", ledger.scan_ms);
+        println!("Scan work: {} ms wall time", ledger.scan_ms);
     } else {
-        println!("Last sync: never");
+        println!("Last scan: never");
     }
     println!("Dashboard: {}", config::dashboard_url(&config));
     Ok(())
@@ -221,20 +264,42 @@ fn uninstall(remove_remote: bool, purge: bool) -> Result<()> {
         }
     }
     if purge {
-        if let Ok(dir) = config::config_dir() { let _ = fs::remove_dir_all(dir); }
+        if let Ok(dir) = config::config_dir() {
+            let _ = fs::remove_dir_all(dir);
+        }
     }
-    println!("Automatic sync removed{}.", if purge { " and local configuration purged" } else { "" });
+    println!(
+        "Automatic sync removed{}.",
+        if purge {
+            " and local configuration purged"
+        } else {
+            ""
+        }
+    );
     Ok(())
 }
 
 fn real_main() -> Result<()> {
     match Cli::parse().command {
-        CommandKind::Setup { repo, token, device, interval, no_schedule } => setup(repo, token, device, interval, no_schedule),
-        CommandKind::Join { code, token, device, no_schedule } => join(code, token, device, no_schedule),
+        CommandKind::Setup {
+            repo,
+            token,
+            device,
+            interval,
+            no_schedule,
+        } => setup(repo, token, device, interval, no_schedule),
+        CommandKind::Join {
+            code,
+            token,
+            device,
+            no_schedule,
+        } => join(code, token, device, no_schedule),
         CommandKind::Sync { full, quiet } => run_sync(full, quiet),
         CommandKind::Status => status(),
         CommandKind::Clients => {
-            for client in collector::supported_clients() { println!("{client}"); }
+            for client in collector::supported_clients() {
+                println!("{client}");
+            }
             Ok(())
         }
         CommandKind::Invite => {
@@ -246,7 +311,10 @@ fn real_main() -> Result<()> {
             println!("{}", config::dashboard_url(&config::load()?));
             Ok(())
         }
-        CommandKind::Uninstall { remove_remote, purge } => uninstall(remove_remote, purge),
+        CommandKind::Uninstall {
+            remove_remote,
+            purge,
+        } => uninstall(remove_remote, purge),
     }
 }
 
