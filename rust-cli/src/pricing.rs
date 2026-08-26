@@ -126,20 +126,59 @@ fn strip_date_suffix(value: &str) -> Option<String> {
     (suffix.len() == 8 && suffix.chars().all(|ch| ch.is_ascii_digit())).then(|| base.to_string())
 }
 
+/// CC Switch's models.dev sync is provider-aware. For a provider-less local
+/// session we prefer the model family's canonical vendor when the catalog has
+/// the same normalized model under more than one provider, then fall back to a
+/// stable provider-id ordering. This avoids HashMap iteration changing prices
+/// across runs.
+fn provider_preference(model: &str, provider: &str) -> u8 {
+    let canonical = if model.starts_with("gpt-") || model.starts_with("o1-") || model.starts_with("o3-") || model.starts_with("o4-") {
+        Some("openai")
+    } else if model.starts_with("claude-") {
+        Some("anthropic")
+    } else if model.starts_with("gemini-") {
+        Some("google")
+    } else if model.starts_with("grok-") {
+        Some("xai")
+    } else if model.starts_with("deepseek-") {
+        Some("deepseek")
+    } else if model.starts_with("qwen") {
+        Some("alibaba")
+    } else if model.starts_with("kimi-") {
+        Some("moonshotai")
+    } else if model.starts_with("mimo-") {
+        Some("xiaomi")
+    } else if model.starts_with("glm-") {
+        Some("zai")
+    } else {
+        None
+    };
+    if canonical.is_some_and(|expected| provider.eq_ignore_ascii_case(expected)) { 0 } else { 1 }
+}
+
 fn parse_models_dev(bytes: &[u8]) -> Option<HashMap<String, EffectivePricing>> {
     let response: ModelsDevResponse = serde_json::from_slice(bytes).ok()?;
-    let mut catalog = HashMap::new();
-    for provider in response.into_values() {
-        for (model_id, model) in provider.models.unwrap_or_default() {
+    let mut selected: HashMap<String, (u8, String, EffectivePricing)> = HashMap::new();
+    let mut providers: Vec<_> = response.into_iter().collect();
+    providers.sort_by(|a, b| a.0.cmp(&b.0));
+    for (provider_id, provider) in providers {
+        let mut models: Vec<_> = provider.models.unwrap_or_default().into_iter().collect();
+        models.sort_by(|a, b| a.0.cmp(&b.0));
+        for (model_id, model) in models {
             let Some(cost) = model.cost.as_ref() else { continue; };
             let Some(pricing) = EffectivePricing::from_models_dev(cost) else { continue; };
             let normalized = normalize_model_id(&model_id);
-            if !normalized.is_empty() {
-                catalog.entry(normalized).or_insert(pricing);
+            if normalized.is_empty() { continue; }
+            let preference = provider_preference(&normalized, &provider_id);
+            let replace = selected.get(&normalized).is_none_or(|(old_preference, old_provider, _)| {
+                preference < *old_preference || (preference == *old_preference && provider_id < *old_provider)
+            });
+            if replace {
+                selected.insert(normalized, (preference, provider_id.clone(), pricing));
             }
         }
     }
-    Some(catalog)
+    Some(selected.into_iter().map(|(model, (_, _, pricing))| (model, pricing)).collect())
 }
 
 fn read_cache() -> Option<Vec<u8>> {
@@ -336,5 +375,16 @@ mod tests {
         let quote = book.quote("definitely-unknown", None, &metrics(100, 0, 0, 10));
         assert_eq!(quote.cost_usd, 0.0);
         assert!(quote.lower_bound);
+    }
+
+    #[test]
+    fn canonical_provider_wins_duplicate_models_dev_entries() {
+        let json = br#"{
+          "other": {"models":{"gpt-test":{"cost":{"input":99,"output":99}}}},
+          "openai": {"models":{"gpt-test":{"cost":{"input":5,"output":30}}}}
+        }"#;
+        let catalog = parse_models_dev(json).unwrap();
+        let price = catalog.get("gpt-test").unwrap();
+        assert!((price.input - 5e-6).abs() < 1e-12);
     }
 }
