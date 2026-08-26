@@ -7,13 +7,20 @@ use std::time::{Duration, SystemTime};
 use serde_json::Value;
 use walkdir::WalkDir;
 
+use crate::provider::{route_hint_from_base_url, RouteHint};
+
 #[derive(Debug, Clone, Default)]
 pub struct SessionEvidence {
     pub explicit_provider: Option<String>,
     pub tier: Option<String>,
+    pub route_hint: Option<RouteHint>,
 }
 
-pub type EvidenceMap = HashMap<(String, String), SessionEvidence>;
+#[derive(Debug, Clone, Default)]
+pub struct EvidenceBundle {
+    pub sessions: HashMap<(String, String), SessionEvidence>,
+    pub provider_hints: HashMap<String, RouteHint>,
+}
 
 fn home() -> Option<PathBuf> { dirs::home_dir() }
 
@@ -68,7 +75,19 @@ fn normalize_tiers(tiers: HashSet<String>) -> Option<String> {
     Some(canonical.to_string())
 }
 
-fn scan_codex_file(path: &Path, map: &mut EvidenceMap) {
+fn codex_provider_hints(home: &Path) -> HashMap<String, RouteHint> {
+    let codex_home = std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".codex"));
+    let Ok(text) = std::fs::read_to_string(codex_home.join("config.toml")) else { return HashMap::new(); };
+    let Ok(value) = text.parse::<toml::Value>() else { return HashMap::new(); };
+    let Some(table) = value.get("model_providers").and_then(toml::Value::as_table) else { return HashMap::new(); };
+    table.iter().filter_map(|(id, config)| {
+        let base_url = config.get("base_url").and_then(toml::Value::as_str)
+            .or_else(|| config.get("baseUrl").and_then(toml::Value::as_str))?;
+        Some((id.to_ascii_lowercase(), route_hint_from_base_url(id, base_url)))
+    }).collect()
+}
+
+fn scan_codex_file(path: &Path, bundle: &mut EvidenceBundle) {
     let Ok(file) = File::open(path) else { return; };
     let mut session_id: Option<String> = None;
     let mut provider: Option<String> = None;
@@ -84,14 +103,14 @@ fn scan_codex_file(path: &Path, map: &mut EvidenceMap) {
         }
         collect_keyed_strings(payload, &["service_tier", "serviceTier"], &mut tiers, 0);
     }
-    let fallback_id = path.file_stem().and_then(|v| v.to_str()).map(str::to_string);
-    let id = session_id.or(fallback_id);
+    let id = session_id.or_else(|| path.file_stem().and_then(|v| v.to_str()).map(str::to_string));
     if let Some(id) = id {
-        map.insert(("codex".into(), id), SessionEvidence { explicit_provider: provider, tier: normalize_tiers(tiers) });
+        let route_hint = provider.as_ref().and_then(|p| bundle.provider_hints.get(&p.to_ascii_lowercase())).cloned();
+        bundle.sessions.insert(("codex".into(), id), SessionEvidence { explicit_provider: provider, tier: normalize_tiers(tiers), route_hint });
     }
 }
 
-fn scan_claude_file(path: &Path, map: &mut EvidenceMap) {
+fn scan_claude_file(path: &Path, bundle: &mut EvidenceBundle) {
     let Ok(file) = File::open(path) else { return; };
     let fallback_id = path.file_stem().and_then(|v| v.to_str()).unwrap_or_default().to_string();
     let mut ids = HashSet::new();
@@ -108,24 +127,24 @@ fn scan_claude_file(path: &Path, map: &mut EvidenceMap) {
     }
     let provider = if providers.len() == 1 { providers.into_iter().next() } else { None };
     for id in ids {
-        map.insert(("claude".into(), id), SessionEvidence { explicit_provider: provider.clone(), tier: None });
+        bundle.sessions.insert(("claude".into(), id), SessionEvidence { explicit_provider: provider.clone(), tier: None, route_hint: None });
     }
 }
 
-pub fn scan(incremental: bool) -> EvidenceMap {
-    let mut map = EvidenceMap::new();
-    let Some(home) = home() else { return map; };
-
+pub fn scan(incremental: bool) -> EvidenceBundle {
+    let mut bundle = EvidenceBundle::default();
+    let Some(home) = home() else { return bundle; };
+    bundle.provider_hints = codex_provider_hints(&home);
     for root in [home.join(".codex/sessions"), home.join(".codex/archived_sessions")] {
-        if root.exists() { for path in jsonl_files(&root, incremental) { scan_codex_file(&path, &mut map); } }
+        if root.exists() { for path in jsonl_files(&root, incremental) { scan_codex_file(&path, &mut bundle); } }
     }
     let claude_root = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| home.join(".claude")).join("projects");
-    if claude_root.exists() { for path in jsonl_files(&claude_root, incremental) { scan_claude_file(&path, &mut map); } }
-    map
+    if claude_root.exists() { for path in jsonl_files(&claude_root, incremental) { scan_claude_file(&path, &mut bundle); } }
+    bundle
 }
 
-pub fn for_message<'a>(map: &'a EvidenceMap, client: &str, session_id: &str) -> Option<&'a SessionEvidence> {
-    map.get(&(client.to_string(), session_id.to_string()))
+pub fn for_message<'a>(bundle: &'a EvidenceBundle, client: &str, session_id: &str) -> Option<&'a SessionEvidence> {
+    bundle.sessions.get(&(client.to_string(), session_id.to_string()))
 }
 
 #[cfg(test)]
