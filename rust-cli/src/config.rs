@@ -81,8 +81,11 @@ pub fn join_code(config:&Config)->Result<String>{
     Ok(URL_SAFE_NO_PAD.encode(serde_json::to_vec(&JoinCode{version:2,repo:config.repo.clone(),dashboard_key:config.dashboard_key.clone(),interval_minutes:config.interval_minutes})?))
 }
 
+/// The browser dashboard reads the sanitized `public.json` aggregate snapshot,
+/// so the viewing URL contains no secret. The AES key is retained only for the
+/// encrypted full ledger and multi-device workspace continuity.
 pub fn dashboard_url(config:&Config)->String{
-    format!("{}?repo={}#key={}",DASHBOARD_ORIGIN,config.repo,config.dashboard_key)
+    format!("{}?repo={}",DASHBOARD_ORIGIN,config.repo)
 }
 
 pub fn load()->Result<Config>{
@@ -110,6 +113,6 @@ fn write_private(path:&Path,data:&[u8])->Result<()> {
 mod tests{
     use super::*;
     #[test]fn join_code_roundtrip_shape(){let c=new_config("owner/repo","t".into(),Some("My PC".into()),15).unwrap();let j=join_code(&c).unwrap();let other=from_join(&j,"x".into(),Some("Other".into())).unwrap();assert_eq!(other.repo,"owner/repo");assert_eq!(other.dashboard_key,c.dashboard_key);assert_ne!(other.device_id,c.device_id);}
-    #[test]fn dashboard_key_stays_in_fragment(){let c=new_config("owner/repo","t".into(),Some("x".into()),15).unwrap();let u=dashboard_url(&c);assert!(u.contains("?repo=owner/repo#key="));}
+    #[test]fn dashboard_url_is_public_and_repo_scoped(){let c=new_config("owner/repo","t".into(),Some("x".into()),15).unwrap();let u=dashboard_url(&c);assert_eq!(u,"https://atingaii.github.io/token-monitor/?repo=owner/repo");assert!(!u.contains("#key="));assert!(!u.contains(&c.dashboard_key));}
     #[test]fn same_name_devices_do_not_collide(){let a=new_config("owner/repo","t".into(),Some("server".into()),15).unwrap();let b=new_config("owner/repo","t".into(),Some("server".into()),15).unwrap();assert_ne!(a.device_id,b.device_id);assert!(a.device_id.starts_with("server-"));}
 }
