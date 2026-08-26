@@ -17,18 +17,36 @@ case "$ARCH" in
   *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
 esac
 
-ASSET="token-monitor-${PLATFORM}-${ARCHIVE_ARCH}.tar.gz"
+STEM="token-monitor-${PLATFORM}-${ARCHIVE_ARCH}"
+ASSET="${STEM}.tar.gz"
+CHECKSUM="${STEM}.sha256"
 INSTALL_DIR="${TOKEN_MONITOR_INSTALL_DIR:-$HOME/.local/bin}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$INSTALL_DIR"
 
-if command -v curl >/dev/null 2>&1; then
-  curl -fL --retry 3 --connect-timeout 15 "$BASE/$ASSET" -o "$TMP/$ASSET"
-elif command -v wget >/dev/null 2>&1; then
-  wget -q "$BASE/$ASSET" -O "$TMP/$ASSET"
+download() {
+  url="$1"
+  output="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL --retry 3 --connect-timeout 15 "$url" -o "$output"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q "$url" -O "$output"
+  else
+    echo "curl or wget is required only for downloading the prebuilt binary." >&2
+    exit 1
+  fi
+}
+
+download "$BASE/$ASSET" "$TMP/$ASSET"
+download "$BASE/$CHECKSUM" "$TMP/$CHECKSUM"
+
+if command -v sha256sum >/dev/null 2>&1; then
+  (cd "$TMP" && sha256sum -c "$CHECKSUM")
+elif command -v shasum >/dev/null 2>&1; then
+  (cd "$TMP" && shasum -a 256 -c "$CHECKSUM")
 else
-  echo "curl or wget is required only for downloading the prebuilt binary." >&2
+  echo "No SHA-256 verifier found; refusing an unverified install." >&2
   exit 1
 fi
 
