@@ -41,7 +41,14 @@ impl Metrics {
 pub struct UsageRow {
     pub date: String,
     pub client: String,
+    /// Raw provider/routing identity emitted by the source parser. Kept for auditability.
     pub provider: String,
+    /// Normalized upstream model vendor (OpenAI, Anthropic, Google, etc.).
+    pub upstream_vendor: String,
+    /// Normalized routing/billing provider (official vendor, AWS Bedrock, Azure, OpenRouter, relay, etc.).
+    pub route_provider: String,
+    /// One of official, cloud, relay, self-hosted, unknown.
+    pub route_type: String,
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tier: Option<String>,
