@@ -2,7 +2,7 @@ name: Rust CLI CI
 
 on:
   push:
-    branches: [main, feat/github-ledger-pages]
+    branches: [main, feat/github-ledger-pages, feat/public-dashboard-v101]
   pull_request:
 
 permissions:
@@ -84,9 +84,13 @@ jobs:
           node --check web/app.js
       - name: Analytics unit tests
         run: node web/analytics.test.cjs
-      - name: Privacy regression checks
+      - name: Public dashboard and privacy regression checks
+        shell: bash
         run: |
-          ! grep -R -i -E 'auth\.json|prompt[^a-z]|assistant response|api[_ -]?key' web/*.js || (echo 'Dashboard code must not depend on private session payloads' && exit 1)
+          grep -q 'public.json' web/app.js
+          grep -q 'sidebarToggle' web/index.html
+          ! grep -E -i 'type="password"|id="unlock|Dashboard key' web/index.html || (echo 'Normal dashboard UI must not require a browser key/password' && exit 1)
+          ! grep -R -i -E 'auth\.json|prompt[^a-z]|assistant response|api[_ -]?key' web/*.js || (echo 'Dashboard code must not depend on private session payloads or credentials' && exit 1)
 
   upstream-parser-suite:
     name: Tokscale v4.14.0 parser regression suite
