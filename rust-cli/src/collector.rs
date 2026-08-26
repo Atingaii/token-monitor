@@ -320,6 +320,7 @@ pub fn merge_incremental(mut previous: Ledger, partial: Ledger, since: &str) -> 
             .then_with(|| left.model.cmp(&right.model))
             .then_with(|| left.tier.cmp(&right.tier))
     });
+    previous.schema_version = partial.schema_version;
     previous.generated_at = partial.generated_at;
     previous.device = partial.device;
     previous.scan_ms = partial.scan_ms;
@@ -422,5 +423,13 @@ mod tests {
         let mut replacement_device = baseline.clone();
         replacement_device.device.id = "device-b".to_string();
         assert!(!same_accounting(&baseline, &replacement_device));
+    }
+
+    #[test]
+    fn incremental_merge_adopts_current_schema() {
+        let previous = empty_ledger(2, "device-a");
+        let partial = empty_ledger(3, "device-a");
+        let merged = merge_incremental(previous, partial, "2026-08-24");
+        assert_eq!(merged.schema_version, 3);
     }
 }
