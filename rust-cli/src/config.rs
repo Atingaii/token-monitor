@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::generate_key;
@@ -58,16 +59,22 @@ pub fn sanitize_device_id(value: &str) -> String {
     let trimmed=out.trim_matches('-'); if trimmed.is_empty(){"device".to_string()}else{trimmed.to_string()}
 }
 
+fn unique_device_id(name: &str) -> String {
+    let mut bytes = [0u8; 4];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    format!("{}-{}", sanitize_device_id(name), hex::encode(bytes))
+}
+
 pub fn new_config(repo:&str,token:String,device_name:Option<String>,interval_minutes:u32)->Result<Config>{
     let name=device_name.filter(|v|!v.trim().is_empty()).unwrap_or_else(default_device_name);
-    Ok(Config{version:2,repo:normalize_repo(repo)?,github_token:token,dashboard_key:generate_key(),device_id:sanitize_device_id(&name),device_name:name,interval_minutes:interval_minutes.clamp(5,1440)})
+    Ok(Config{version:2,repo:normalize_repo(repo)?,github_token:token,dashboard_key:generate_key(),device_id:unique_device_id(&name),device_name:name,interval_minutes:interval_minutes.clamp(5,1440)})
 }
 
 pub fn from_join(code:&str,token:String,device_name:Option<String>)->Result<Config>{
     let bytes=URL_SAFE_NO_PAD.decode(code.trim()).context("invalid join code")?; let join:JoinCode=serde_json::from_slice(&bytes).context("invalid join code payload")?;
     if join.version!=2{bail!("unsupported join-code version {}",join.version);} crate::crypto::decode_key(&join.dashboard_key)?;
     let name=device_name.filter(|v|!v.trim().is_empty()).unwrap_or_else(default_device_name);
-    Ok(Config{version:2,repo:normalize_repo(&join.repo)?,github_token:token,dashboard_key:join.dashboard_key,device_id:sanitize_device_id(&name),device_name:name,interval_minutes:join.interval_minutes.clamp(5,1440)})
+    Ok(Config{version:2,repo:normalize_repo(&join.repo)?,github_token:token,dashboard_key:join.dashboard_key,device_id:unique_device_id(&name),device_name:name,interval_minutes:join.interval_minutes.clamp(5,1440)})
 }
 
 pub fn join_code(config:&Config)->Result<String>{
@@ -102,6 +109,7 @@ fn write_private(path:&Path,data:&[u8])->Result<()> {
 #[cfg(test)]
 mod tests{
     use super::*;
-    #[test]fn join_code_roundtrip_shape(){let c=new_config("owner/repo","t".into(),Some("My PC".into()),15).unwrap();let j=join_code(&c).unwrap();let other=from_join(&j,"x".into(),Some("Other".into())).unwrap();assert_eq!(other.repo,"owner/repo");assert_eq!(other.dashboard_key,c.dashboard_key);}
+    #[test]fn join_code_roundtrip_shape(){let c=new_config("owner/repo","t".into(),Some("My PC".into()),15).unwrap();let j=join_code(&c).unwrap();let other=from_join(&j,"x".into(),Some("Other".into())).unwrap();assert_eq!(other.repo,"owner/repo");assert_eq!(other.dashboard_key,c.dashboard_key);assert_ne!(other.device_id,c.device_id);}
     #[test]fn dashboard_key_stays_in_fragment(){let c=new_config("owner/repo","t".into(),Some("x".into()),15).unwrap();let u=dashboard_url(&c);assert!(u.contains("?repo=owner/repo#key="));}
+    #[test]fn same_name_devices_do_not_collide(){let a=new_config("owner/repo","t".into(),Some("server".into()),15).unwrap();let b=new_config("owner/repo","t".into(),Some("server".into()),15).unwrap();assert_ne!(a.device_id,b.device_id);assert!(a.device_id.starts_with("server-"));}
 }
