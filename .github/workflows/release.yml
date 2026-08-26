@@ -77,6 +77,8 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - name: Resolve release tag
@@ -104,3 +106,50 @@ jobs:
               --generate-notes \
               --title "$RELEASE_TAG"
           fi
+
+  verify-install:
+    name: Install smoke / ${{ matrix.label }}
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x64
+            os: ubuntu-latest
+          - label: linux-arm64
+            os: ubuntu-24.04-arm
+          - label: macos-arm64
+            os: macos-latest
+          - label: macos-x64
+            os: macos-15-intel
+          - label: windows-x64
+            os: windows-latest
+          - label: windows-arm64
+            os: windows-11-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install from published release (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          TOKEN_MONITOR_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}
+        run: |
+          export TOKEN_MONITOR_INSTALL_DIR="$RUNNER_TEMP/token-monitor-bin"
+          sh ./install.sh
+          "$TOKEN_MONITOR_INSTALL_DIR/token-monitor" --version | grep '${{ needs.publish.outputs.tag }}' || \
+            "$TOKEN_MONITOR_INSTALL_DIR/token-monitor" --version | grep '1.1.0'
+          "$TOKEN_MONITOR_INSTALL_DIR/token-monitor" clients >/dev/null
+      - name: Install from published release (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TOKEN_MONITOR_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}
+        run: |
+          $env:TOKEN_MONITOR_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'token-monitor-bin'
+          ./install.ps1
+          $binary = Join-Path $env:TOKEN_MONITOR_INSTALL_DIR 'token-monitor.exe'
+          $version = & $binary --version
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '1\.1\.0') { throw "Unexpected version: $version" }
+          & $binary clients | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'clients smoke test failed' }
