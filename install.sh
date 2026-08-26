@@ -56,5 +56,5 @@ esac
 echo "Installed: $INSTALL_DIR/token-monitor"
 "$INSTALL_DIR/token-monitor" --version
 echo
-echo "First device: token-monitor setup --repo YOUR_GITHUB/REPO"
-echo "Other devices: token-monitor setup --join <JOIN_CODE>"
+echo "First device: token-monitor setup"
+echo "Additional device: paste the 'token-monitor join ...' command printed by an existing device"
