@@ -9,13 +9,24 @@ switch ($Arch) {
   default { throw "Unsupported Windows architecture: $Arch" }
 }
 
-$Asset = "token-monitor-windows-$AssetArch.zip"
+$Stem = "token-monitor-windows-$AssetArch"
+$Asset = "$Stem.zip"
+$Checksum = "$Stem.sha256"
 $InstallDir = if ($env:TOKEN_MONITOR_INSTALL_DIR) { $env:TOKEN_MONITOR_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'TokenMonitor\bin' }
 $Temp = Join-Path ([System.IO.Path]::GetTempPath()) ("token-monitor-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $Temp, $InstallDir | Out-Null
 try {
   $Zip = Join-Path $Temp $Asset
+  $ChecksumPath = Join-Path $Temp $Checksum
   Invoke-WebRequest -UseBasicParsing -Uri "$Base/$Asset" -OutFile $Zip
+  Invoke-WebRequest -UseBasicParsing -Uri "$Base/$Checksum" -OutFile $ChecksumPath
+
+  $Expected = ((Get-Content -Raw $ChecksumPath).Trim() -split '\s+')[0].ToLowerInvariant()
+  $Actual = (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($Expected -ne $Actual) {
+    throw "SHA-256 mismatch for $Asset. Expected $Expected, got $Actual"
+  }
+
   Expand-Archive -Force -Path $Zip -DestinationPath $Temp
   Copy-Item -Force (Join-Path $Temp 'token-monitor.exe') (Join-Path $InstallDir 'token-monitor.exe')
 
