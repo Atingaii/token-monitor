@@ -17,7 +17,7 @@ use clap::{Parser, Subcommand};
 
 use crate::config::Config;
 use crate::github::GithubClient;
-use crate::model::DeviceInfo;
+use crate::model::{DeviceInfo, PublicLedger};
 
 #[derive(Parser)]
 #[command(name = "token-monitor", version, about = "Zero-server, cross-device AI coding token analytics")]
@@ -36,7 +36,7 @@ enum CommandKind {
         /// GitHub credential. Usually omitted: env vars or an authenticated `gh` are auto-detected.
         #[arg(long)]
         token: Option<String>,
-        /// Friendly device name. Defaults to the hostname.
+        /// Friendly local device name. Public dashboard snapshots use an anonymous device label.
         #[arg(long)]
         device: Option<String>,
         /// Snapshot cadence in minutes. No process stays resident between runs.
@@ -57,7 +57,7 @@ enum CommandKind {
         #[arg(long)]
         no_schedule: bool,
     },
-    /// Incrementally collect local usage and replace this device's encrypted GitHub snapshot.
+    /// Incrementally collect local usage and replace this device's GitHub snapshot.
     Sync {
         #[arg(long)]
         full: bool,
@@ -70,7 +70,7 @@ enum CommandKind {
     Clients,
     /// Print a copy-paste command for adding another device.
     Invite,
-    /// Print only the dashboard URL.
+    /// Print only the public dashboard URL.
     Dashboard,
     /// Remove the native timer; optionally remove the remote snapshot and local data.
     Uninstall {
@@ -118,6 +118,13 @@ fn device_info(config: &Config) -> DeviceInfo {
     }
 }
 
+fn print_costs(ledger: &crate::model::Ledger) {
+    if ledger.rows.iter().any(|row| row.plan_cost_available) {
+        println!("  Plan-equivalent cost: ${:.2}", ledger.totals.plan_cost_usd);
+    }
+    println!("  API-equivalent cost: ${:.2}", ledger.totals.cost_usd);
+}
+
 fn run_sync(full: bool, quiet: bool) -> Result<()> {
     let config = config::load()?;
     let previous = config::read_cached_ledger()?;
@@ -136,9 +143,6 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
         )
     };
 
-    // Keep the fresh scan locally even when no remote write is needed. The
-    // scheduled process then exits without network mutation: idle devices create
-    // zero GitHub commits/refs and consume zero resident memory between runs.
     config::write_cached_ledger(&ledger)?;
     if previous_for_compare
         .as_ref()
@@ -152,15 +156,17 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
     }
 
     let envelope = crypto::encrypt_ledger(&ledger, &config.dashboard_key)?;
+    let public_ledger = PublicLedger::from_ledger(&ledger, &envelope.device_hash);
     let github = GithubClient::new(config.repo.clone(), config.github_token.clone())?;
-    let branch = github.replace_snapshot(&config.device_id, &envelope)?;
+    let branch = github.replace_snapshot(&config.device_id, &envelope, &public_ledger)?;
     if !quiet {
         println!("Synced {} ({mode})", config.device_name);
         println!("  Branch: {branch}");
         println!("  Rows: {}", ledger.rows.len());
         println!("  Tokens: {}", ledger.totals.total_tokens());
-        println!("  API-equivalent cost: ${:.2}", ledger.totals.cost_usd);
+        print_costs(&ledger);
         println!("  Scan: {} ms", ledger.scan_ms);
+        println!("  Public dashboard aggregate: enabled (de-identified)");
     }
     Ok(())
 }
@@ -178,7 +184,7 @@ fn finish_onboarding(config: &Config, no_schedule: bool) -> Result<()> {
         }
     }
     println!();
-    println!("Dashboard:");
+    println!("Dashboard (no key required):");
     println!("{}", config::dashboard_url(config));
     println!();
     println!("Add another device with this single command:");
@@ -244,6 +250,9 @@ fn status() -> Result<()> {
     if let Some(ledger) = config::read_cached_ledger()? {
         println!("Last scan: {}", ledger.generated_at);
         println!("Tokens: {}", ledger.totals.total_tokens());
+        if ledger.rows.iter().any(|row| row.plan_cost_available) {
+            println!("Plan-equivalent cost: ${:.2}", ledger.totals.plan_cost_usd);
+        }
         println!("API-equivalent cost: ${:.2}", ledger.totals.cost_usd);
         println!("Rows: {}", ledger.rows.len());
         println!("Scan work: {} ms wall time", ledger.scan_ms);
@@ -270,30 +279,19 @@ fn uninstall(remove_remote: bool, purge: bool) -> Result<()> {
     }
     println!(
         "Automatic sync removed{}.",
-        if purge {
-            " and local configuration purged"
-        } else {
-            ""
-        }
+        if purge { " and local configuration purged" } else { "" }
     );
     Ok(())
 }
 
 fn real_main() -> Result<()> {
     match Cli::parse().command {
-        CommandKind::Setup {
-            repo,
-            token,
-            device,
-            interval,
-            no_schedule,
-        } => setup(repo, token, device, interval, no_schedule),
-        CommandKind::Join {
-            code,
-            token,
-            device,
-            no_schedule,
-        } => join(code, token, device, no_schedule),
+        CommandKind::Setup { repo, token, device, interval, no_schedule } => {
+            setup(repo, token, device, interval, no_schedule)
+        }
+        CommandKind::Join { code, token, device, no_schedule } => {
+            join(code, token, device, no_schedule)
+        }
         CommandKind::Sync { full, quiet } => run_sync(full, quiet),
         CommandKind::Status => status(),
         CommandKind::Clients => {
@@ -311,10 +309,7 @@ fn real_main() -> Result<()> {
             println!("{}", config::dashboard_url(&config::load()?));
             Ok(())
         }
-        CommandKind::Uninstall {
-            remove_remote,
-            purge,
-        } => uninstall(remove_remote, purge),
+        CommandKind::Uninstall { remove_remote, purge } => uninstall(remove_remote, purge),
     }
 }
 
