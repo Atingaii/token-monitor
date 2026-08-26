@@ -30,8 +30,8 @@ try {
 
   & (Join-Path $InstallDir 'token-monitor.exe') --version
   Write-Host "`nInstalled: $(Join-Path $InstallDir 'token-monitor.exe')"
-  Write-Host 'First device: token-monitor setup --repo YOUR_GITHUB/REPO'
-  Write-Host 'Other devices: token-monitor setup --join <JOIN_CODE>'
+  Write-Host 'First device: token-monitor setup'
+  Write-Host "Additional device: paste the 'token-monitor join ...' command printed by an existing device"
 }
 finally {
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Temp
