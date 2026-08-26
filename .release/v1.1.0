@@ -6,5 +6,5 @@ Token Monitor v1.1.0
 - GPT-5.6 Sol $5/$30/$0.50/$6.25 per MTok base card
 - static musl Linux binaries for old-glibc compatibility
 - Windows PowerShell 5.1 installer compatibility
-- post-merge release and installer verification gate
-- retriggered after removing the stuck CI concurrency gate
+- independent distribution endpoint: https://token-monitor-v110-dist2-cuidongshan350-1312.vercel.app/
+- dashboard endpoint: https://token-monitor-cuidongshan350-1312.vercel.app/
