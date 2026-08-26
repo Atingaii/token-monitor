@@ -1,5 +1,6 @@
 name: Deploy Dashboard
 
+# Repository Pages source: GitHub Actions.
 on:
   push:
     branches: [main]
