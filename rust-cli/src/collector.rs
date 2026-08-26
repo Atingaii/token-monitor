@@ -46,23 +46,34 @@ fn load_pricing() -> Option<Arc<PricingService>> {
     runtime.block_on(async { PricingService::get_or_init().await.ok() })
 }
 
-/// Thin copy of Tokscale CLI's `compute_msg_cost`: all actual model/provider
-/// matching and rate arithmetic stays inside PricingService.
-fn message_cost(message: &ParsedMessage, pricing: Option<&PricingService>) -> f64 {
+fn usage_from_message(message: &ParsedMessage) -> TokenBreakdown {
+    TokenBreakdown {
+        input: message.input,
+        output: message.output,
+        cache_read: message.cache_read,
+        cache_write: message.cache_write,
+        reasoning: message.reasoning,
+    }
+}
+
+/// Delegate both price arithmetic and coverage semantics to Tokscale. When a
+/// price source is absent or does not cover the observed token buckets, the
+/// numeric result is retained only as a lower bound rather than presented as an
+/// exact zero/partial cost.
+fn price_usage(
+    model_id: &str,
+    provider_id: Option<&str>,
+    usage: &TokenBreakdown,
+    pricing: Option<&PricingService>,
+) -> (f64, bool) {
     let Some(pricing) = pricing else {
-        return 0.0;
+        return (0.0, true);
     };
-    pricing.calculate_cost_with_provider(
-        &message.model_id,
-        Some(&message.provider_id),
-        &TokenBreakdown {
-            input: message.input,
-            output: message.output,
-            cache_read: message.cache_read,
-            cache_write: message.cache_write,
-            reasoning: message.reasoning,
-        },
-    )
+    let covered = pricing.covers_usage_with_provider(model_id, provider_id, usage);
+    let cost = pricing
+        .calculate_cost_with_provider(model_id, provider_id, usage)
+        .max(0.0);
+    (cost, !covered)
 }
 
 fn normalize_text(value: &str, fallback: &str) -> String {
@@ -102,18 +113,31 @@ fn parser_provider_is_explicit(client: &str, raw_provider: &str) -> bool {
         && matches!(client, "opencode" | "micode")
 }
 
-fn metrics_from_message(message: &ParsedMessage, pricing: Option<&PricingService>) -> Metrics {
+fn metrics_from_message(
+    message: &ParsedMessage,
+    pricing: Option<&PricingService>,
+) -> (Metrics, bool) {
     // ParsedMessage already contains Tokscale's normalized buckets. Do not
     // reinterpret raw client token fields here.
-    Metrics {
-        input: message.input.max(0),
-        output: message.output.max(0),
-        cache_read: message.cache_read.max(0),
-        cache_write: message.cache_write.max(0),
-        reasoning: message.reasoning.max(0),
-        messages: message.message_count.max(0),
-        cost_usd: message_cost(message, pricing).max(0.0),
-    }
+    let usage = usage_from_message(message);
+    let (cost_usd, cost_lower_bound) = price_usage(
+        &message.model_id,
+        Some(&message.provider_id),
+        &usage,
+        pricing,
+    );
+    (
+        Metrics {
+            input: message.input.max(0),
+            output: message.output.max(0),
+            cache_read: message.cache_read.max(0),
+            cache_write: message.cache_write.max(0),
+            reasoning: message.reasoning.max(0),
+            messages: message.message_count.max(0),
+            cost_usd,
+        },
+        cost_lower_bound,
+    )
 }
 
 fn add_grouped(
@@ -155,7 +179,7 @@ fn route_for_message(
 fn canonical_codex_days(messages: &[ParsedMessage]) -> HashMap<String, codex_tier::DayReconciliation> {
     let mut days: HashMap<String, codex_tier::DayReconciliation> = HashMap::new();
     for message in messages.iter().filter(|message| message.client == "codex") {
-        let metrics = metrics_from_message(message, None);
+        let (metrics, _) = metrics_from_message(message, None);
         let day = days.entry(message.date.clone()).or_insert_with(|| codex_tier::DayReconciliation {
             tokens: 0,
             messages: 0,
@@ -231,6 +255,7 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
         let client = normalize_text(&message.client, "unknown");
         let model = canonical_model_id(&message.model_id);
         let (raw_provider, identity) = route_for_message(&route_evidence, message, &client, &model);
+        let (metrics, cost_lower_bound) = metrics_from_message(message, pricing.as_deref());
         add_grouped(
             &mut grouped,
             RowKey {
@@ -243,8 +268,8 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
                 model,
                 tier: None,
             },
-            metrics_from_message(message, pricing.as_deref()),
-            false,
+            metrics,
+            cost_lower_bound,
         );
     }
 
@@ -381,6 +406,35 @@ mod tests {
         assert!(!parser_provider_is_explicit("kimi", "moonshot"));
         assert!(!parser_provider_is_explicit("gemini", "google"));
         assert!(!parser_provider_is_explicit("opencode", "unknown"));
+    }
+
+    #[test]
+    fn unknown_pricing_is_explicitly_a_lower_bound() {
+        let service = PricingService::new(HashMap::new(), HashMap::new());
+        let usage = TokenBreakdown {
+            input: 100,
+            output: 50,
+            cache_read: 0,
+            cache_write: 0,
+            reasoning: 0,
+        };
+        let (cost, lower_bound) = price_usage(
+            "token-monitor-definitely-unlisted-model",
+            Some("unknown"),
+            &usage,
+            Some(&service),
+        );
+        assert_eq!(cost, 0.0);
+        assert!(lower_bound);
+
+        let (offline_cost, offline_lower_bound) = price_usage(
+            "any-model",
+            Some("unknown"),
+            &usage,
+            None,
+        );
+        assert_eq!(offline_cost, 0.0);
+        assert!(offline_lower_bound);
     }
 
     #[test]
