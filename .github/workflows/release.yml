@@ -39,25 +39,29 @@ jobs:
       - name: Install cross for Linux ARM64
         if: matrix.cross
         run: cargo install cross --locked
-      - name: Build native/cross target
+      - name: Build target
         shell: bash
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release --manifest-path rust-cli/Cargo.toml --target '${{ matrix.target }}'
+            cross build --release --workspace --target '${{ matrix.target }}'
           else
-            cargo build --release --manifest-path rust-cli/Cargo.toml --target '${{ matrix.target }}'
+            cargo build --release --workspace --target '${{ matrix.target }}'
           fi
       - name: Package
         shell: bash
         run: |
           mkdir -p out/package
-          cp 'rust-cli/target/${{ matrix.target }}/release/token-monitor' out/package/token-monitor
+          cp 'target/${{ matrix.target }}/release/token-monitor' out/package/token-monitor
           chmod +x out/package/token-monitor
           tar -C out/package -czf 'out/${{ matrix.asset }}.tar.gz' token-monitor
+          cd out
+          shasum -a 256 '${{ matrix.asset }}.tar.gz' > '${{ matrix.asset }}.sha256'
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: out/${{ matrix.asset }}.tar.gz
+          path: |
+            out/${{ matrix.asset }}.tar.gz
+            out/${{ matrix.asset }}.sha256
           if-no-files-found: error
 
   windows:
@@ -76,17 +80,21 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: Build
-        run: cargo build --release --manifest-path rust-cli/Cargo.toml --target ${{ matrix.target }}
+        run: cargo build --release --workspace --target ${{ matrix.target }}
       - name: Package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force out/package | Out-Null
-          Copy-Item "rust-cli/target/${{ matrix.target }}/release/token-monitor.exe" "out/package/token-monitor.exe"
+          Copy-Item "target/${{ matrix.target }}/release/token-monitor.exe" "out/package/token-monitor.exe"
           Compress-Archive -Force "out/package/token-monitor.exe" "out/${{ matrix.asset }}.zip"
+          $hash = (Get-FileHash "out/${{ matrix.asset }}.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  ${{ matrix.asset }}.zip" | Set-Content -NoNewline "out/${{ matrix.asset }}.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: out/${{ matrix.asset }}.zip
+          path: |
+            out/${{ matrix.asset }}.zip
+            out/${{ matrix.asset }}.sha256
           if-no-files-found: error
 
   publish:
