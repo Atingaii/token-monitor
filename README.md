@@ -1,303 +1,305 @@
-<p align="right">
-   <strong>EN</strong> | <a href="./README.zh-CN.md">简</a> | <a href="./README.zh-TW.md">繁</a> | <a href="./README.ko.md">KO</a> | <a href="./README.ja.md">JA</a>
-</p>
-<div align="center">
-    <img src=".github/assets/app.png" alt="Token Monitor logo" width="120">
-    <h1>Token Monitor</h1>
-</div>
-
 <p align="center">
-    <em>One live dashboard for every AI coding tool, synced across every machine.</em>
+  <img src=".github/assets/hero.svg" alt="Token Monitor — serverless cross-device usage analytics for AI coding tools" width="100%" />
 </p>
 
 <p align="center">
-    <a href="https://github.com/Javis603/token-monitor/releases"><img src="https://img.shields.io/github/v/release/Javis603/token-monitor?include_prereleases&style=flat-square&label=release&color=22c55e" alt="Latest release" /></a>
-    <a href="https://github.com/Javis603/token-monitor/releases"><img src="https://img.shields.io/github/downloads/Javis603/token-monitor/total?style=flat-square&color=22c55e" alt="Total downloads" /></a>
-    <img src="https://img.shields.io/badge/Windows-10%2B-0078D4?style=flat-square" alt="Windows 10 or later" />
-    <img src="https://img.shields.io/badge/macOS-12%2B-0A84FF?style=flat-square&logo=apple&logoColor=white" alt="macOS 12 or later" />
-    <img src="https://img.shields.io/badge/Linux-x64-64748b?style=flat-square&logo=linux&logoColor=white" alt="Linux x64" />
-    <a href="https://discord.gg/HmdNVVvw5P"><img src="https://img.shields.io/discord/1344259784219689031?color=5865F2&label=Discord&logo=discord&logoColor=white&style=flat-square" alt="Discord"></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-A855F7?style=flat-square" alt="License: MIT" /></a>
+  <a href="https://github.com/Atingaii/token-monitor/actions/workflows/rust-cli-ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Atingaii/token-monitor/rust-cli-ci.yml?branch=main&style=flat-square&label=CI"></a>
+  <a href="https://github.com/Atingaii/token-monitor/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Atingaii/token-monitor?style=flat-square&display_name=tag"></a>
+  <img alt="Rust" src="https://img.shields.io/badge/runtime-Rust-000000?style=flat-square&logo=rust&logoColor=white">
+  <img alt="Platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-555?style=flat-square">
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-2f81f7?style=flat-square"></a>
 </p>
 
-<div align="center">
-    <img src=".github/assets/demo.gif">
-</div>
+<p align="center">
+  <strong>One lightweight CLI. Every device. Every supported AI coding client. One private-by-design analytics view.</strong>
+</p>
 
-## What is Token Monitor?
+<p align="center">
+  <a href="README.zh-CN.md">简体中文</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#dashboard">Dashboard</a> ·
+  <a href="SOURCES.md">Accounting Sources</a>
+</p>
 
-A desktop widget that shows live token usage and AI Tool Limits across 32+ AI coding tools — Claude Code, Codex, Cursor, GitHub Copilot, Cherry Studio, and more — with real-time multi-device sync, historical usage trends, and breakdowns by tool, device, model, session, or project.
+Token Monitor is a **serverless, cross-device usage analytics system for AI coding tools**. It installs as one prebuilt Rust executable on Windows, Linux, or macOS, reads local usage through the pinned Tokscale Core accounting engine, encrypts normalized device snapshots, and stores them in the user's own Token Monitor fork. A static GitHub Pages dashboard reads those encrypted snapshots and decrypts them locally in the browser.
 
-## Supported Tools
+There is no Electron app, Node.js runtime, Python environment, Docker stack, VPS, database, always-on hub, or second data repository to operate.
 
-Token Monitor supports token usage, account-limit checks, and session details separately:
+## Why Token Monitor
 
-| Logo | Tool | Data path | Token Usage | AI Tool Limits | Session Details |
-|:---:|------|-----------|:---:|:---:|:---:|
-| <img src=".github/assets/tools-icon/claude.png" width="28" alt="Claude Code" /> | Claude Code | `~/.claude/projects/`, `~/.claude/transcripts/` | ✅ | ✅ | ✅ |
-| <img src=".github/assets/tools-icon/codex.png" width="28" alt="Codex" /> | Codex | `~/.codex/` (`sessions/`, `archived_sessions/`) | ✅ | ✅ | ✅ |
-| <img src=".github/assets/tools-icon/opencode.png" width="28" alt="OpenCode" /> | OpenCode | `~/.local/share/opencode/` (`opencode*.db`, `storage/message/`) | ✅ | ✅ | ✅ |
-| <img src=".github/assets/tools-icon/hermes-agent.png" width="28" alt="Hermes Agent" /> | Hermes Agent | `~/.hermes/state.db` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/openclaw.png" width="28" alt="OpenClaw" /> | OpenClaw | `~/.openclaw/agents/` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/cursor.png" width="28" alt="Cursor" /> | Cursor | `~/.config/tokscale/cursor-cache/` | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/antigravity.png" width="28" alt="Antigravity" /> | Antigravity | `~/.gemini/` (`antigravity/`, `antigravity-ide/`, `antigravity-backup/`, `antigravity-cli/conversations/`) | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/cline.png" width="28" alt="Cline" /> | Cline | VS Code globalStorage tasks (`.../saoudrizwan.claude-dev/tasks/`), `~/.cline/data/sessions/` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/kimi.png" width="28" alt="Kimi" /> | Kimi CLI / Kimi Code / Kimi Work | `~/.kimi/sessions/`, `~/.kimi-code/sessions/`, `<platform-app-data>/kimi-desktop/` | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/qwen.png" width="28" alt="Qwen" /> | Qwen CLI | `~/.qwen/projects/` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/xai.png" width="28" alt="Grok Build" /> | Grok Build | `~/.grok/` (`sessions/`, `logs/unified.jsonl`) | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/copilot.png" width="28" alt="GitHub Copilot" /> | GitHub Copilot | VS Code `workspaceStorage/*/chatSessions/`, `~/.copilot/` (`otel/`, `data.db`) | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/pi.png" width="28" alt="Pi" /> | Pi / Oh My Pi | `~/.pi/agent/sessions/`, `~/.omp/agent/sessions/` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/zed.png" width="28" alt="Zed" /> | Zed | `~/.local/share/zed/threads/threads.db` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/kilocode.png" width="28" alt="Kilo Code" /> | Kilo Code | VS Code globalStorage tasks (`.../kilocode.kilo-code/tasks/`) — Linux & remote/WSL only | ✅ | — | — |
-| <img src=".github/assets/tools-icon/commandcode.png" width="28" alt="Command Code" /> | Command Code | `~/.commandcode/projects/**/*.jsonl` | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/mimo-code.png" width="28" alt="MiMo Code" /> | MiMo Code | `~/.local/share/mimocode/mimocode.db` | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/zcode.png" width="28" alt="ZCode" /> | ZCode / GLM | `~/.zcode/` (`projects/`, `cli/db/db.sqlite`) | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/kiro.png" width="28" alt="Kiro" /> | Kiro | `~/.kiro/sessions/cli/`, Kiro IDE globalStorage & `kiro-cli` DB | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/codebuddy.png" width="28" alt="CodeBuddy" /> | CodeBuddy | `~/.codebuddy/projects/` + IDE / VS Code extension logs | ✅ | — | — |
-| <img src=".github/assets/tools-icon/workbuddy.png" width="28" alt="WorkBuddy" /> | WorkBuddy | `~/.workbuddy/projects/`, `~/.workbuddy/workbuddy.db` | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/proma.png" width="28" alt="Proma" /> | Proma | `~/.proma/agent-sessions/*.jsonl` | ✅ | — | — |
-| <img src=".github/assets/tools-icon/qoder.png" width="28" alt="Qoder" /> | Qoder | `<platform-app-data>/QoderCN/SharedClientCache/cache/db/local.db` (CN only) | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/reasonix.png" width="28" alt="Reasonix" /> | Reasonix | `~/.reasonix/` (`stats/`, `sessions/`, `projects/*/sessions/`) | ✅ | — | — |
-| <img src=".github/assets/tools-icon/deepseek.png" width="28" alt="DeepSeek" /> | DeepSeek / DeepSeek Harness | `~/.dsh/sessions/` (`session.jsonl`, `session.jsonl.zstd`) | ✅ | ✅ | ✅ |
-| <img src=".github/assets/tools-icon/cherrystudio.png" width="28" alt="Cherry Studio" /> | Cherry Studio | `<platform-app-data>/CherryStudio/` (`Data/Agents/.claude/projects/` V2, `.claude/projects/` legacy) | ✅ | — | — |
-| <img src=".github/assets/tools-icon/openrouter.png" width="28" alt="OpenRouter" /> | OpenRouter | OpenRouter API key (usage/key limit; balance when credits access is authorized, documented for Management keys) | — | ✅ | — |
-| <img src=".github/assets/tools-icon/minimax.png" width="28" alt="Minimax" /> | Minimax | Minimax API key (Token Plan quota via Minimax API) | — | ✅ | — |
-| <img src=".github/assets/tools-icon/volcengine.png" width="28" alt="Volcengine" /> | Volcengine | Ark API key or Volcengine AK/SK (Ark Coding Plan quota via Volcengine API) | — | ✅ | — |
-| <img src=".github/assets/tools-icon/ollama.png" width="28" alt="Ollama" /> | Ollama | Ollama Cloud cookie (session/weekly usage via ollama.com/settings) | — | ✅ | — |
-| <img src=".github/assets/tools-icon/trae.png" width="28" alt="Trae CN" /> | Trae CN | Trae CN access token (Trae CN / SOLO credits via trae.cn) | — | ✅ | — |
-| <img src=".github/assets/tools-icon/thirdparty.png" width="28" alt="Third-party APIs" /> | Third-party APIs | New API / Sub2API-compatible account presets (including compatible One API forks), a New API API-key preset, and a Custom balance endpoint | — | ✅ | — |
+Most usage monitors answer *“what did this machine use?”*. Token Monitor is designed to answer the harder cross-device questions:
 
-<details>
-<summary><strong>Notes, Custom balance endpoints, and data paths overridden by environment variables</strong></summary>
+- How many tokens did all of my machines use together?
+- Which device, client, model, provider route, or service tier consumed them?
+- Was a GPT/Claude request routed through an official API, a cloud provider, OpenRouter, or a relay?
+- What is the API-equivalent value of the observed usage?
+- Can I keep the accounting layer lightweight without running a permanent monitoring service?
 
-<br>
+## Core principles
 
-- Paths above are the defaults. Token Monitor follows the same environment overrides Tokscale does — `$XDG_DATA_HOME` for the `~/.local/share/` roots, and per-tool variables such as `$CODEX_HOME`, `$GROK_HOME`, `$HERMES_HOME`, `$KIMI_CODE_HOME`, `$DSH_HOME`, `$REASONIX_STATE_HOME`, `$REASONIX_HOME` and the `$CLINE_*` family.
+| Principle | Implementation |
+| --- | --- |
+| **Low overhead** | No resident daemon. Native OS schedulers launch a short one-shot sync and exit. |
+| **Cross platform** | Native release/test targets for Windows, Linux, and macOS on x64 and ARM64. |
+| **Mature accounting core** | Client parsing, token semantics, deduplication, model normalization, and generic pricing come from pinned **Tokscale v4.14.0**. |
+| **Evidence-first routing** | Model vendor and actual request route are separate. A GPT model alone does not prove “OpenAI official”. |
+| **Private by design** | Only aggregate numeric usage and routing labels are uploaded, encrypted with AES-256-GCM. |
+| **No telemetry database** | Each device owns one encrypted `tm-ledger-*` branch in the user's fork. |
+| **Fail closed on special accounting** | Codex Fast/Standard enhancement is accepted only when it reconciles exactly with canonical Tokscale daily totals. |
 
-- Command Code transcripts do not contain actual token counts or per-message model metadata. Token usage is estimated from transcript text, while model attribution and derived cost may reflect the currently configured model rather than the model historically used for each request.
+## Architecture
 
-- Custom maps numeric JSON fields from one GET balance endpoint; OpenAI or Anthropic compatibility alone is not enough.
+```text
+ Windows / Linux / macOS
+          │
+          │ local usage files / databases
+          ▼
+     Tokscale Core v4.14.0
+  parsing · dedup · token semantics
+  model normalization · pricing
+          │
+          ▼
+      token-monitor
+  route evidence + encryption
+          │
+          │ AES-256-GCM snapshot
+          ▼
+ YOUR_NAME/token-monitor fork
+ ├─ main                    project source
+ ├─ tm-ledger-<device-A>    encrypted ledger.json
+ ├─ tm-ledger-<device-B>    encrypted ledger.json
+ └─ tm-ledger-<device-C>    encrypted ledger.json
+          │
+          ▼
+ Atingaii GitHub Pages dashboard
+ browser-local decrypt + analytics
+```
 
-#### Qoder CN (local adapter)
-
-Qoder CN token usage is read from the app's local SQLite database, not an API — enable it in Settings → tools (opt-in, off by default). The database is auto-detected per platform: macOS `~/Library/Application Support/QoderCN/SharedClientCache/cache/db/local.db`, Windows `%APPDATA%\QoderCN\SharedClientCache\cache\db\local.db`, Linux `~/.config/QoderCN/SharedClientCache/cache/db/local.db` — overridable with `TOKEN_MONITOR_QODER_CN_DB_PATH`.
-
-This is an advanced local integration: reading needs a `sqlite3` CLI on PATH or a Node runtime with unflagged `node:sqlite` (Node ≥ 23.4; the Electron widget may need the CLI). Read failures are logged, and an existing complete snapshot is retained instead of being replaced with zero usage. Costs are estimated from the models.dev catalog for each mapped model; the adapter may break if Qoder changes its database schema.
-</details>
-
-## Showcase
-
-<table>
-<tr>
-<td width="290" align="center"><img src=".github/assets/home-view.png" width="250" alt="Home View"><br><sub>Customizable dashboard — choose which modules show and their order</sub></td>
-<td width="290" align="center"><img src=".github/assets/limits-view.png" width="250" alt="Limits View"><br><sub>Multiple accounts side by side, one-click switch of the active Codex account</sub></td>
-<td width="290" align="center"><img src=".github/assets/tools-view.png" width="250" alt="Tools View"><br><sub>Click any tool to expand input / output and cache-hit detail</sub></td>
-</tr>
-<tr>
-<td width="290" align="center"><img src=".github/assets/sessions-view.png" width="250" alt="Session View"><br><sub>Open a single session to break each prompt into tokens and tools used</sub></td>
-<td width="290" align="center"><img src=".github/assets/models-view.png" width="250" alt="Models View"><br><sub>Every model's usage and cost, aggregated across tools</sub></td>
-<td width="290" align="center"><img src=".github/assets/devices-view.png" width="250" alt="Devices View"><br><sub>Each device's usage, cost, and sync status — expand for per-machine detail</sub></td>
-</tr>
-</table>
-
-<table>
-<tr>
-<td width="435" align="center"><img src=".github/assets/dashboard-overview.png" width="400" alt="Usage Dashboard Overview"><br><sub>A year of activity heatmap and streaks, aggregated across all devices</sub></td>
-<td width="435" align="center"><img src=".github/assets/dashboard-trends.png" width="400" alt="Usage Dashboard Trends"><br><sub>A year of daily trends, stacked by tool / model, with K-line</sub></td>
-</tr>
-</table>
-
-## Why Token Monitor?
-
-Most usage monitors are useful on the machine they run on. Token Monitor is built for multi-device work: each device watches its own local logs, sends summary updates to your hub, and every connected widget sees token changes almost immediately.
+A device sync never writes telemetry to `main`. Each device controls only its own `tm-ledger-<device-hash>` branch, so devices do not contend on a shared file. Snapshot branches are force-moved to fresh root commits instead of growing a visible telemetry commit history.
 
 ## Features
 
-### Tracking usage
+### Multi-client accounting
 
-- **Live token tracking** — Claude Code, Codex, Cursor, GitHub Copilot, Antigravity, OpenCode, and 26+ AI tools, with the UI updating within seconds of each turn (full list in the table above)
-- **Per-session detail** — open a Claude Code, Codex, or OpenCode session to see tokens per prompt, expandable to each reply's exact token split and tools used (read on-demand from local transcripts or databases, never synced)
-- **Cache hit statistics** — click any tool or model to expand a detailed breakdown of input tokens (cache hit vs miss), output tokens, and hit-rate percentages
-- **Cost & currency** — cost alongside token counts, shown in USD, TWD, HKD, or CNY; exchange rates auto-update daily and can be manually overridden in Settings
-- **WSL usage (Windows)** — file-based usage from a running WSL distro is detected automatically and merged about every 5 minutes; SQLite-backed tools such as OpenCode and Hermes may require a [headless agent inside WSL](docs/wsl-sqlite-setup.md)
+Token Monitor scans the client set exposed by the pinned Tokscale Core rather than implementing separate parsers itself. This includes Codex, Claude Code, OpenCode, Gemini-related sources, Kimi, Cursor-related sources, DeepSeek Harness, Copilot sources, and the broader client set supported by Tokscale v4.14.0.
 
-### Limits, trends & export
-
-- **AI Tool Limits detection** — provider-specific session, weekly, billing, and credits windows for Claude Code, Codex, Cursor, OpenRouter, third-party APIs, GLM, Kimi, and 21+ providers, including multiple OpenRouter/third-party profiles and DeepSeek prepaid balance/spend
-- **Multiple accounts & Codex switching** — track several accounts per provider, each with its own limits; a tracked Codex account can be switched as the active local account in one click, without re-authenticating
-- **Preserve deleted session usage** — many tools prune old sessions (Claude Code drops transcripts after 30 days by default), losing that history. When enabled, Token Monitor archives observed daily tool/model usage locally so the heatmap and trends survive even after the source files are gone (see [Session data retention](#session-data-retention) below)
-- **Usage Trends & Dashboard** — a home-screen activity heatmap and trend chart, plus a dedicated dashboard window with streaks and stacked per-tool/per-model history (bar and K-line views) across all your devices
-- **Optional Status view** — Claude, OpenAI, Cursor, and DeepSeek status pages, with manual or interval re-checks
-- **Data export** — export usage as tool-agnostic CSV + JSON, manually or auto-written to a folder, for spreadsheets, Obsidian, Grafana, or scripts; see [docs/export.md](docs/export.md)
-- **Subscription records** — record by hand what each AI account actually costs; the plan label's tooltip then reports the price, the next renewal or end date, time subscribed, and the month's usage cost as a multiple of what the plan costs, for recurring plans and top-up ledgers alike
-
-### Multi-device & deployment
-
-- **Real-time multi-device sync** — Server-Sent Events push an update on one device to the others within seconds
-- **Local-first** — no servers needed for single-device use
-- **Self-hosted sync backend** — in-widget hub, Node CLI hub, or Cloudflare Worker
-- **iOS widget support** — Widgy and Scriptable through the Worker hub
-- **Privacy-first** — prompts, responses, source code, and file contents stay on your machine
-
-### Interface & surfaces
-
-- **Breakdown views** — grouped by tool, device, model, session, project, or account limits
-- **Menu bar (macOS) and system tray (Windows) popover** — live cost, tokens, or the closest-to-empty provider limit % next to the icon
-- **Floating Bubble mode** — collapses the widget into a draggable mini-window with click or hover preview and tray-style content
-- **Menu bar layout composer** — the menu bar and the floating bubble can use a built-in preset or a layout you build yourself: pick "Custom…" to add AI tool icons, quota bars, percentages, reset times, cost, or custom text, drag to reorder against a live preview, and give each item its own AI tool, account, quota window, and typeface
-- **Appearance controls** — interface theme switching (incl. a light mode), per-tool vendor colours, glass opacity, blur, and transparent window mode
-- **Experimental native macOS Widget** — macOS 14+ support in Small, Medium, and Large sizes, with Overview, Quota, Models, Activity, and Trend pages. This source-only preview is not yet promised in published releases.
-- **Customizable tool list** — hide, pin, and reorder tools in the main dashboard without changing what gets tracked
-- **Recordable global shortcut** — show or hide the window from anywhere
-- **Discord Rich Presence** — broadcast today's tokens, cost, and top client (opt-in)
-
-## Installation
-
-Download from [GitHub Releases](https://github.com/Javis603/token-monitor/releases).
-
-- **macOS (Apple Silicon)** — `.dmg`, signed and notarized
-- **macOS (Intel)** — x64 `.dmg`, signed and notarized
-- **Windows 10/11** — setup and portable `.exe`, [code-signed](docs/code-signing.md)
-- **Linux x64** — `.AppImage`
-
-Packaged builds check GitHub Releases automatically. When an update is available, the app shows an update indicator; supported platforms can also install from Settings → General.
-
-### First run
-
-Local mode is the default: launch the app and it starts tracking this device. No hub, agent, or config required.
-
-## Multi-device sync
-
-Pick ONE hub backend that all your devices (and any headless agents) connect to. On each device, open the widget and pick a mode under Settings → Multi-device Sync. The widget contributes this device's usage automatically; run `npm run agent` only on machines without a widget.
-
-#### Option A — Host the hub from the widget (easiest, no CLI)
-
-In the widget on one always-on machine, open Settings → Multi-device Sync and pick **Host hub on this device**. The widget generates a random secret and lists the LAN URLs other devices can connect to (Tailscale or ZeroTier addresses appear here too). On every other device, pick **Connect to a hub** and paste the URL + secret.
-
-The hub runs while Token Monitor is running — quitting (not just closing the window) stops it for all connected devices.
-
-#### Option B — Self-hosted Node hub (always-on headless machine)
+Run this on any installed machine to see the exact embedded set:
 
 ```bash
-# on the always-on machine
-cp .env.example .env
-# set TOKEN_MONITOR_SECRET to something private, then:
-npm run hub
+token-monitor clients
 ```
 
-#### Option C — Cloudflare Worker hub (across networks, including iPhone)
+See [`SOURCES.md`](SOURCES.md) for the accounting provenance and version pins.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Javis603/token-monitor/tree/main/worker)
+### Provider and route identity
 
-One-click deploy — Cloudflare will prompt for the `TOKEN_MONITOR_SECRET` during setup. Or deploy manually:
+The ledger keeps four identities separate:
+
+| Field | Meaning | Example |
+| --- | --- | --- |
+| `model` | Canonical model | `gpt-5.6-sol` |
+| `upstreamVendor` | Model family owner | `openai` |
+| `routeProvider` | Actual route/billing provider when evidenced | `azure-openai`, `aws-bedrock`, `openrouter`, `newapi` |
+| `routeType` | Route class | `official`, `cloud`, `aggregator`, `relay`, `self-hosted`, `unknown` |
+
+This intentionally prevents a common analytics error: **model identity is not route identity**. If the source proves only that the model belongs to OpenAI, the upstream vendor may be `openai` while the route remains `unknown`.
+
+Recognized route classes include official APIs, Azure OpenAI, AWS Bedrock, Google Vertex, OpenRouter, New API / One API / LiteLLM / CLIProxyAPI-style relays, inference providers, self-hosted endpoints, and unknown/custom routes when evidence is incomplete.
+
+### Codex service tiers
+
+Codex request-level Fast/Standard handling is a narrow enhancement derived from the MIT-licensed `falyx6851-byte/codex-monitor` service-tier parser and pricing logic. It is **not** allowed to redefine canonical Codex usage.
+
+For a day to receive Fast/Standard detail, the enhancement must reconcile with Tokscale on both token total and message count. If it does not, Token Monitor discards the tier split for that day and keeps the canonical Tokscale accounting intact.
+
+### API-equivalent cost
+
+`costUsd` means **API-equivalent estimated value**, not a ChatGPT/Codex subscription invoice.
+
+Generic model pricing follows Tokscale. Specialized Codex service-tier pricing is isolated to the tier adapter. Where a source cannot expose a billable component such as cache-write tokens, the affected row is marked as a **lower-bound estimate** instead of being presented as exact.
+
+## Dashboard
+
+The static dashboard is designed as a restrained admin/analytics console rather than a card-heavy decorative UI.
+
+It supports:
+
+- Today / 7 days / 30 days / current month / all time / custom range
+- device, client, model, upstream vendor, route provider, route type, raw provider, and service-tier filters
+- Total Tokens, Input, Cache Read, Cache Write, Output, Reasoning, Messages, and API-equivalent Cost
+- line, area, bar, stacked bar, donut, treemap, and table views
+- CSV export
+- light and dark themes
+- browser-local AES-GCM decryption
+
+A user's fork does **not** need its own GitHub Pages deployment. The central dashboard reads the encrypted `tm-ledger-*` branches from the repository encoded in its URL.
+
+## Quick Start
+
+### 1. Install
+
+**macOS / Linux**
 
 ```bash
-cd worker
-npm install
-npx wrangler login
-npx wrangler secret put TOKEN_MONITOR_SECRET
-npx wrangler deploy
+curl -fsSL https://raw.githubusercontent.com/Atingaii/token-monitor/main/install.sh | sh
 ```
 
-Paste the deployed URL into each device's widget at Settings → Multi-device Sync. See [worker/README.md](worker/README.md) for the iOS widget recipe and endpoint reference, or [docs/API.md](docs/API.md) for the hub HTTP API.
+**Windows PowerShell**
 
-## App data
+```powershell
+irm https://raw.githubusercontent.com/Atingaii/token-monitor/main/install.ps1 | iex
+```
 
-App state lives in the OS user-data dir — delete it along with the app to fully uninstall.
+Installers download the matching prebuilt release binary, verify its SHA-256 checksum, and do not install Rust, Node.js, or Python.
 
-| Platform | Path |
-|----------|------|
-| macOS | `~/Library/Application Support/Token Monitor/` |
-| Windows | `%APPDATA%/Token Monitor/` |
-| Linux | `~/.config/Token Monitor/` |
+### 2. First device
+
+```bash
+token-monitor setup
+```
+
+`setup` automatically:
+
+1. resolves a GitHub write credential from explicit flags, environment variables, or an authenticated `gh` session;
+2. finds your `token-monitor` fork, or attempts to fork the project automatically;
+3. generates a dashboard encryption key;
+4. performs the first full usage scan;
+5. writes the first encrypted device snapshot;
+6. installs the low-overhead native scheduler;
+7. prints your Dashboard URL and the exact join command for another device.
+
+No extra `token-monitor-data` repository is required.
+
+If your fork was renamed or is organization-owned, use the advanced override:
+
+```bash
+token-monitor setup --repo OWNER/RENAMED_FORK
+```
+
+### 3. Add another device
+
+The first machine prints a command like:
+
+```bash
+token-monitor join 'eyJ2ZXJzaW9uIjoyLC4uLn0'
+```
+
+Paste that command unchanged on another Windows, Linux, or macOS machine. To print it again later:
+
+```bash
+token-monitor invite
+```
+
+The pair code contains the fork address, dashboard decryption key, and sync cadence. It does **not** contain a GitHub write token.
+
+## Authentication
+
+Token Monitor resolves a GitHub credential in this order:
+
+1. explicit `--token`
+2. `TOKEN_MONITOR_GITHUB_TOKEN`
+3. `GITHUB_TOKEN`
+4. `GH_TOKEN`
+5. authenticated `gh auth token`
+6. one-time hidden terminal prompt
+
+The credential is used only to manage the user's fork and encrypted snapshot branches. It is never embedded in the pair code or dashboard URL.
+
+## Background load
+
+There is no resident Token Monitor process.
+
+| Platform | Scheduler |
+| --- | --- |
+| Windows | Task Scheduler |
+| macOS | `launchd` |
+| Linux | `systemd --user` timer, with cron fallback |
+
+The default schedule is one incremental sync every 15 minutes. Incremental scans rescan a two-day overlap to account for delayed writes and day boundaries. If accounting has not changed, the client skips the GitHub snapshot write entirely.
+
+## Privacy model
+
+Uploaded ledgers contain normalized aggregate statistics such as:
+
+- date and device identity
+- client, model, provider/route labels, optional service tier
+- input/cache/output/reasoning token buckets
+- message count
+- API-equivalent cost and lower-bound flag where applicable
+
+They do **not** upload:
+
+- prompts or assistant responses
+- reasoning text
+- source code or project contents
+- project paths
+- full JSONL/SQLite session data
+- `auth.json`
+- API keys or GitHub tokens
+
+Before upload, the ledger is encrypted using AES-256-GCM with a random 256-bit dashboard key. The dashboard key is carried in the URL fragment (`#key=...`), which browsers do not send as part of the HTTP request.
+
+## Commands
+
+```text
+token-monitor setup [--repo OWNER/REPO]
+token-monitor join <PAIR_CODE>
+token-monitor invite
+token-monitor sync [--full]
+token-monitor status
+token-monitor clients
+token-monitor dashboard
+token-monitor uninstall [--remove-remote] [--purge]
+```
+
+## Verification
+
+The release gate is intentionally broader than “it compiles on Linux”. CI covers native or hosted runners for:
+
+- Linux x86_64
+- Linux ARM64
+- Windows x86_64
+- Windows ARM64
+- macOS Intel
+- macOS Apple Silicon
+- Rust `clippy`
+- dashboard syntax, aggregation, CSV, and privacy regressions
+- the complete pinned Tokscale v4.14.0 parser/scanner regression suite
+
+The release workflow publishes platform-specific binaries for the same six OS/architecture targets.
 
 ## Build from source
 
-To build your own installer, use Node.js 22.15+ on the **target** OS (electron-builder can't cross-build a macOS `.dmg` on Windows, or vice-versa).
+End users do not need Rust. Contributors can build the workspace with:
 
 ```bash
-npm install
-npm run dist:mac     # macOS arm64 .dmg           → dist/
-npm run dist:mac:x64 # macOS Intel x64 .dmg       → dist/
-npm run dist:win     # Windows x64 installer .exe → dist/
-npm run dist:linux   # Linux x64 AppImage         → dist/
-npm run pack         # unpacked app dir (no installer), for quick local testing
+cargo test --workspace --all-targets
+cargo build --release --workspace
 ```
 
-Output lands in `dist/`. Windows and Linux use the matching `dist:*` script above on the target OS. Packaging the macOS release build requires a local Developer ID Application signing identity; use `npm start` for local development or unsupported platforms.
-
-Runtime and packaging scripts explicitly ensure the pinned tokscale binary on the four vendored targets. Other source platforms keep the npm binary and filter clients it does not support; `npm install`, lint, and tests do not download it.
-
-## How it works
+## Project structure
 
 ```text
-Mode A — Local (default, no setup)
-    widget (Electron) ──▶ tokscale ──▶ ~/.claude, ~/.codex, $HERMES_HOME
-
-Mode B — Sync (opt-in, multi-device)
-    device A agent ──▶
-    device B agent ──▶  hub  ──▶  widget on any device
-    device C agent ──▶
+rust-cli/     lightweight collector, encryption, GitHub sync and scheduling
+web/          static analytics dashboard
+.github/      CI, release, Pages workflows and project artwork
+SOURCES.md    accounting provenance and pinned upstream implementations
 ```
-
-The widget chooses local vs sync mode based on Settings → Multi-device Sync. The hub itself can run as a separate `npm run hub` process, a Cloudflare Worker, or directly inside one of the widgets (Host mode). In sync mode the hub pushes aggregated stats to every connected widget over Server-Sent Events, so updates on one device appear on the others within a few seconds.
-
-## Session data retention
-
-With **Preserve deleted session usage** enabled (Settings → Collection), Token Monitor archives observed daily tool/model usage locally with no time limit — so even after a source tool prunes its own sessions, the heatmap and trends are unaffected.
-
-<details>
-<summary><strong>Advanced: extend the source tool's own retention</strong></summary>
-
-<br>
-
-The heatmap and sync payload use a rolling 370-day window (older observations remain available locally for future views). **Claude Code keeps only 30 days of transcripts by default** (`cleanupPeriodDays`); to keep the full rolling year before the archive kicks in, raise it in `~/.claude/settings.json` before the window passes:
-
-```json
-{
-  "cleanupPeriodDays": 370
-}
-```
-
-A larger value keeps more, at the cost of transcripts living on disk for as long as you set. tokscale's [Session Data Retention](https://github.com/junhoyeo/tokscale#session-data-retention) table covers the other tools' defaults and config paths.
-
-This archive only covers days Token Monitor has already observed; data deleted before it started tracking cannot be recovered.
-
-</details>
-
-## Settings
-
-There are two places to configure Token Monitor; day-to-day use only needs the first:
-
-- **Widget (GUI)** — click the `⚙` button in the bottom-right corner. Sections, in order: General (language, launch at login, updates), Main (Home modules and display currency), Window (window behavior, menu bar and floating-bubble layout, tray mode, shortcut), Appearance (theme and vendor colours), Collection (tracked tools, collection cadence, Preserve deleted session usage, data export), AI Tool Limits (provider selection, limits, and credentials), Subscriptions (what you pay per account), and Multi-device Sync. The `⇧` button in the title bar cycles the window behavior.
-- **Headless agent & hub** — no UI; configured with a `.env` file at the project root (copy from `.env.example`), precedence CLI flag → env var → built-in default.
-
-See the [configuration reference](docs/configuration.md) for every setting and all environment variables.
-
-## Privacy
-
-Token Monitor processes usage logs locally and sends no analytics or telemetry to the project maintainer. Network access occurs only for documented or user-enabled features. See the [privacy policy](docs/privacy.md) for the data used by updates, provider integrations, Discord Rich Presence, and optional multi-device sync.
-
-## Star History
-
-<a href="https://github.com/Javis603/token-monitor/tree/star-history">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Javis603/token-monitor/star-history/star-history-dark.svg" />
-   <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Javis603/token-monitor/star-history/star-history.svg" />
-   <img alt="Star History Chart" src="https://raw.githubusercontent.com/Javis603/token-monitor/star-history/star-history.svg" />
- </picture>
-</a>
 
 ## Contributing
 
-Issues and PRs are welcome. Project conventions, architecture notes, and the command reference live in [AGENTS.md](AGENTS.md) — written for coding agents, but it doubles as the contributor guide.
+Bug reports and pull requests are welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) before changing accounting, provider attribution, crypto, or release behavior. Accounting changes must retain source provenance and test coverage rather than introducing a second hand-written parser or pricing implementation.
 
-## Acknowledgments
+## Security
 
-- [tokscale](https://github.com/junhoyeo/tokscale) for log parsing and token accounting.
-- [CodexBar](https://github.com/steipete/CodexBar) for AI Tool Limits research.
-- [Code signing policy](docs/code-signing.md): Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+For credential handling, encrypted ledger behavior, or other security-sensitive issues, see [`SECURITY.md`](SECURITY.md). Please do not publish sensitive reproduction data in a public issue.
+
+## Upstream and attribution
+
+This project is a serverless CLI-focused rewrite of [Javis603/token-monitor](https://github.com/Javis603/token-monitor) and uses [junhoyeo/tokscale](https://github.com/junhoyeo/tokscale) v4.14.0 as its multi-client accounting engine. Codex service-tier enhancement is derived from the MIT-licensed [falyx6851-byte/codex-monitor](https://github.com/falyx6851-byte/codex-monitor).
+
+Detailed provenance is recorded in [`SOURCES.md`](SOURCES.md) and [`NOTICE`](NOTICE).
 
 ## License
 
-[MIT](LICENSE) © [@Javis](https://github.com/Javis603)
+[MIT](LICENSE). Original upstream notices are retained as required.

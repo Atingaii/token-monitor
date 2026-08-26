@@ -1,55 +1,39 @@
-name: Pages
+name: Deploy Dashboard
 
 on:
   push:
-    branches: ['main']
+    branches: [main]
     paths:
-      - 'site/**'
+      - 'web/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 concurrency:
   group: pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: site/package-lock.json
-      - name: Install site dependencies
-        run: npm ci --prefix site
-      - name: Build static site
-        run: npm run build --prefix site
-      - name: Upload GitHub Pages artifact
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: _site
-
   deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
     steps:
-      - name: Deploy to GitHub Pages
+      - uses: actions/checkout@v4
+      - name: Validate static dashboard
+        run: |
+          node --check web/analytics.js
+          node --check web/app.js
+          node web/analytics.test.cjs
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@v4
