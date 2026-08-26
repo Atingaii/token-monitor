@@ -5,10 +5,17 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const METRIC_KEYS = ['input','output','cacheRead','cacheWrite','reasoning','messages','sessions','durationMs','costUsd'];
+  // Keep this list aligned with the Rust ledger's additive Metrics shape.
+  // Session cardinality and duration/performance are deliberately excluded
+  // because they cannot be safely summed across every grouping dimension.
+  const METRIC_KEYS = ['input','output','cacheRead','cacheWrite','reasoning','messages','costUsd'];
 
   function totalTokens(row) {
-    return Number(row.input || 0) + Number(row.output || 0) + Number(row.cacheRead || 0) + Number(row.cacheWrite || 0) + Number(row.reasoning || 0);
+    return Number(row.input || 0)
+      + Number(row.output || 0)
+      + Number(row.cacheRead || 0)
+      + Number(row.cacheWrite || 0)
+      + Number(row.reasoning || 0);
   }
 
   function metricValue(row, metric) {
@@ -21,6 +28,7 @@
       for (const key of METRIC_KEYS) out[key] += Number(row[key] || 0);
     }
     out.totalTokens = totalTokens(out);
+    out.costLowerBound = (rows || []).some(row => Boolean(row.costLowerBound));
     return out;
   }
 
@@ -36,7 +44,9 @@
       const key = rowDimension(row, dimension);
       map.set(key, (map.get(key) || 0) + metricValue(row, metric));
     }
-    return [...map.entries()].map(([key, value]) => ({ key, value })).sort((a, b) => b.value - a.value || a.key.localeCompare(b.key));
+    return [...map.entries()]
+      .map(([key, value]) => ({ key, value }))
+      .sort((a, b) => b.value - a.value || a.key.localeCompare(b.key));
   }
 
   function groupMatrix(rows, primary, secondary, metric) {
@@ -47,14 +57,19 @@
       const key = `${x}\u0000${stack}`;
       map.set(key, (map.get(key) || 0) + metricValue(row, metric));
     }
-    const sortDimension = (dimension, values) => dimension === 'date' ? values.sort() : values.sort((a,b) => a.localeCompare(b));
+    const sortDimension = (dimension, values) => dimension === 'date'
+      ? values.sort()
+      : values.sort((a,b) => a.localeCompare(b));
     const xValues = sortDimension(primary, [...xSet]);
     const stacks = [...stackSet].sort((a,b) => a.localeCompare(b));
     return { xValues, stacks, value: (x, stack) => map.get(`${x}\u0000${stack}`) || 0 };
   }
 
   function filterRows(rows, filters) {
-    const { start, end, device='*', client='*', model='*', provider='*', upstreamVendor='*', routeProvider='*', routeType='*', tier='*' } = filters || {};
+    const {
+      start, end, device='*', client='*', model='*', provider='*',
+      upstreamVendor='*', routeProvider='*', routeType='*', tier='*'
+    } = filters || {};
     return (rows || []).filter(row => {
       if (start && row.date < start) return false;
       if (end && row.date > end) return false;
@@ -71,9 +86,9 @@
   }
 
   function squarify(items, x, y, width, height) {
-    // Lightweight deterministic slice-and-dice treemap. The dashboard needs a
-    // stable hierarchy view more than an optimal aspect-ratio solver.
-    const positive = (items || []).filter(item => Number(item.value) > 0).sort((a,b) => b.value - a.value);
+    const positive = (items || [])
+      .filter(item => Number(item.value) > 0)
+      .sort((a,b) => b.value - a.value);
     const total = positive.reduce((sum, item) => sum + Number(item.value), 0);
     if (!total || width <= 0 || height <= 0) return [];
     const horizontal = width >= height;
@@ -89,10 +104,20 @@
   }
 
   function toCsv(rows) {
-    const columns = ['date','deviceName','platform','client','upstreamVendor','routeProvider','routeType','provider','model','tier','input','cacheRead','cacheWrite','output','reasoning','messages','sessions','durationMs','costUsd'];
+    const columns = [
+      'date','deviceName','platform','client','upstreamVendor','routeProvider',
+      'routeType','provider','model','tier','input','cacheRead','cacheWrite',
+      'output','reasoning','messages','costUsd','costLowerBound'
+    ];
     const quote = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
-    return [columns.join(','), ...(rows || []).map(row => columns.map(column => quote(row[column])).join(','))].join('\n');
+    return [
+      columns.join(','),
+      ...(rows || []).map(row => columns.map(column => quote(row[column])).join(','))
+    ].join('\n');
   }
 
-  return { METRIC_KEYS, totalTokens, metricValue, sumRows, rowDimension, groupRows, groupMatrix, filterRows, squarify, toCsv };
+  return {
+    METRIC_KEYS, totalTokens, metricValue, sumRows, rowDimension,
+    groupRows, groupMatrix, filterRows, squarify, toCsv
+  };
 });
