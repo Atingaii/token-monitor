@@ -13,6 +13,7 @@ const {
   parseLimitProviders
 } = require('../shared/limitCollector');
 const { postSyncPayload } = require('../shared/syncPayload');
+const { putGithubLedgerSummary } = require('../shared/githubLedger');
 const { applyProjectRollups } = require('../shared/usage');
 const { runAgent, runAgentOnce } = require('./runtime');
 const {
@@ -25,8 +26,13 @@ const {
 
 loadDotEnv();
 const args = parseArgs(process.argv.slice(2));
+const syncProvider = String(args.syncProvider || process.env.TOKEN_MONITOR_SYNC_PROVIDER || 'hub').trim().toLowerCase();
 const hubUrl = String(args.hub || args.hubUrl || process.env.TOKEN_MONITOR_HUB_URL || 'http://127.0.0.1:17321').replace(/\/$/, '');
 const secret = String(args.secret || process.env.TOKEN_MONITOR_SECRET || '').trim();
+const githubRepo = String(args.githubRepo || process.env.TOKEN_MONITOR_GITHUB_REPO || '').trim();
+const githubToken = String(args.githubToken || process.env.TOKEN_MONITOR_GITHUB_TOKEN || process.env.GITHUB_TOKEN || '').trim();
+const githubBranch = String(args.githubBranch || process.env.TOKEN_MONITOR_GITHUB_BRANCH || 'main').trim();
+const githubBasePath = String(args.githubBasePath || process.env.TOKEN_MONITOR_GITHUB_BASE_PATH || 'ledger/devices').trim();
 const deviceId = String(args.device || args.deviceId || process.env.TOKEN_MONITOR_DEVICE_ID || defaultDeviceId());
 const intervalMs = Number(args.interval || args.intervalMs || process.env.TOKEN_MONITOR_INTERVAL_MS || 5 * 60 * 1000);
 const watchEnabled = String(args.watch ?? process.env.TOKEN_MONITOR_WATCH ?? '1') !== '0';
@@ -49,10 +55,6 @@ const opencodeLocalLimitsEnabled = parseBoolean(
     ?? process.env.TOKEN_MONITOR_OPENCODE_LOCAL_LIMITS,
   false
 );
-// The key OpenCode stores for itself needs no configuration, so an unattended
-// agent reports it by default. Switched off for a machine signed in to an
-// account whose quota should not leave it. The widget resolves the same setting
-// through settings.json; here it is env or flag, like every other agent option.
 const opencodeAmbientEnabled = parseBoolean(
   args['opencode-ambient']
     ?? args.opencodeAmbient
@@ -63,6 +65,10 @@ const opencodeAmbientEnabled = parseBoolean(
 const opencodeCookie = String(process.env.TOKEN_MONITOR_OPENCODE_COOKIE || '').trim();
 const once = Boolean(args.once);
 const dryRun = Boolean(args['dry-run'] || args.dryRun);
+
+if (!['hub', 'github'].includes(syncProvider)) {
+  throw new Error(`Unsupported sync provider: ${syncProvider}. Expected hub or github.`);
+}
 
 const usageOptions = {
   clients,
@@ -117,7 +123,7 @@ function summaryWithSessionUsageArchive(summary, now = new Date()) {
   return projectsEnabled ? applyProjectRollups(visibleSummary) : visibleSummary;
 }
 
-async function postUsage(summary) {
+async function postHubUsage(summary) {
   const { response } = await postSyncPayload(fetch, `${hubUrl}/api/ingest`, {
     headers: { 'content-type': 'application/json', ...(secret ? { authorization: `Bearer ${secret}` } : {}) },
     summary,
@@ -127,10 +133,23 @@ async function postUsage(summary) {
   return response.json();
 }
 
+async function postGithubUsage(summary) {
+  if (!githubRepo) throw new Error('TOKEN_MONITOR_GITHUB_REPO is required for github sync');
+  if (!githubToken) throw new Error('TOKEN_MONITOR_GITHUB_TOKEN is required for github sync');
+  return putGithubLedgerSummary(fetch, summary, {
+    repo: githubRepo,
+    token: githubToken,
+    branch: githubBranch,
+    basePath: githubBasePath,
+    deviceId
+  });
+}
+
 async function deliver(summary) {
   if (dryRun) { console.log(JSON.stringify(summary, null, 2)); return; }
-  await postUsage(summary);
-  console.log(`[${new Date().toISOString()}] posted ${summary.deviceId}: today=${summary.today.totalTokens} month=${summary.month.totalTokens} allTime=${summary.allTime.totalTokens}`);
+  if (syncProvider === 'github') await postGithubUsage(summary);
+  else await postHubUsage(summary);
+  console.log(`[${new Date().toISOString()}] posted via ${syncProvider} ${summary.deviceId}: today=${summary.today.totalTokens} month=${summary.month.totalTokens} allTime=${summary.allTime.totalTokens}`);
 }
 
 function registerPidFile(stopRuntime) {
@@ -149,12 +168,12 @@ function registerPidFile(stopRuntime) {
 }
 
 async function main() {
-  const startupMessage = `Token Monitor agent device=${deviceId} hub=${hubUrl} intervalMs=${intervalMs} watch=${watchEnabled} projects=${projectsEnabled ? 'on' : 'off'} history=${historyEnabled ? 'on' : 'off'} sessionArchive=${sessionUsageArchiveEnabled ? 'on' : 'off'} limits=${limitsEnabled ? `${limitProviders || 'none'}:${limitsRefreshMode === 'adaptive' ? 'adaptive' : `${limitsRefreshMs}ms`}` : 'off'}`;
+  const target = syncProvider === 'github' ? `github=${githubRepo || '(unset)'}:${githubBranch}` : `hub=${hubUrl}`;
+  const startupMessage = `Token Monitor agent device=${deviceId} provider=${syncProvider} ${target} intervalMs=${intervalMs} watch=${watchEnabled} projects=${projectsEnabled ? 'on' : 'off'} history=${historyEnabled ? 'on' : 'off'} sessionArchive=${sessionUsageArchiveEnabled ? 'on' : 'off'} limits=${limitsEnabled ? `${limitProviders || 'none'}:${limitsRefreshMode === 'adaptive' ? 'adaptive' : `${limitsRefreshMs}ms`}` : 'off'}`;
   if (dryRun) console.error(startupMessage);
   else console.log(startupMessage);
-  if (!secret) console.warn('Warning: TOKEN_MONITOR_SECRET is not set. Posting without authorization header.');
-  // Claim archive ownership before either a one-shot or long-running scan so
-  // Electron can yield before its history read-modify-write reaches disk.
+  if (syncProvider === 'hub' && !secret) console.warn('Warning: TOKEN_MONITOR_SECRET is not set. Posting without authorization header.');
+  if (syncProvider === 'github' && !githubToken) console.warn('Warning: TOKEN_MONITOR_GITHUB_TOKEN is not set; GitHub sync will fail.');
   let runtimeHandle = null;
   if (!dryRun) registerPidFile(() => runtimeHandle?.stop());
   const runtimeOptions = {
