@@ -8,7 +8,6 @@ mod provider;
 mod scheduler;
 
 use std::fs;
-use std::io::{self, Write};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
@@ -28,18 +27,32 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum CommandKind {
-    /// Configure the first device, or join an existing workspace with --join.
+    /// Configure the first device. The user's project fork is discovered/created automatically.
     Setup {
+        /// Advanced override for a renamed or organization-owned fork.
         #[arg(long)]
         repo: Option<String>,
-        #[arg(long, conflicts_with = "repo")]
-        join: Option<String>,
+        /// GitHub credential. Usually omitted: env vars or an authenticated `gh` are auto-detected.
+        #[arg(long)]
+        token: Option<String>,
+        /// Friendly device name. Defaults to the hostname.
+        #[arg(long)]
+        device: Option<String>,
+        /// Snapshot cadence in minutes. No process stays resident between runs.
+        #[arg(long, default_value_t = 15)]
+        interval: u32,
+        /// Configure without installing the native OS timer.
+        #[arg(long)]
+        no_schedule: bool,
+    },
+    /// Add this machine to an existing Token Monitor workspace using its pair code.
+    Join {
+        /// Pair code printed by `setup` or `invite` on an existing device.
+        code: String,
         #[arg(long)]
         token: Option<String>,
         #[arg(long)]
         device: Option<String>,
-        #[arg(long, default_value_t = 15)]
-        interval: u32,
         #[arg(long)]
         no_schedule: bool,
     },
@@ -54,8 +67,8 @@ enum CommandKind {
     Status,
     /// List every AI coding client supported by the embedded Tokscale scanner.
     Clients,
-    /// Print the join code and dashboard URL for another device.
-    Join,
+    /// Print a copy-paste command for adding another device.
+    Invite,
     /// Print only the dashboard URL.
     Dashboard,
     /// Remove the native timer; optionally remove the remote snapshot and local data.
@@ -67,18 +80,14 @@ enum CommandKind {
     },
 }
 
-fn prompt_line(label: &str) -> Result<String> {
-    print!("{label}");
-    io::stdout().flush()?;
-    let mut value = String::new();
-    io::stdin().read_line(&mut value)?;
-    Ok(value.trim().to_string())
-}
-
 fn resolve_token(explicit: Option<String>) -> Result<String> {
-    if let Some(token) = explicit.filter(|value| !value.trim().is_empty()) { return Ok(token.trim().to_string()); }
+    if let Some(token) = explicit.filter(|value| !value.trim().is_empty()) {
+        return Ok(token.trim().to_string());
+    }
     for key in ["TOKEN_MONITOR_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"] {
-        if let Ok(token) = std::env::var(key) { if !token.trim().is_empty() { return Ok(token.trim().to_string()); } }
+        if let Ok(token) = std::env::var(key) {
+            if !token.trim().is_empty() { return Ok(token.trim().to_string()); }
+        }
     }
     if let Ok(output) = Command::new("gh").args(["auth", "token"]).output() {
         if output.status.success() {
@@ -86,15 +95,21 @@ fn resolve_token(explicit: Option<String>) -> Result<String> {
             if !token.is_empty() { return Ok(token); }
         }
     }
-    let token = rpassword::prompt_password("GitHub fine-grained PAT (input hidden): ")?;
-    if token.trim().is_empty() { bail!("a GitHub token with Contents: read/write is required"); }
+    let token = rpassword::prompt_password("GitHub token (input hidden; one-time setup only): ")?;
+    if token.trim().is_empty() {
+        bail!("GitHub authentication is required. Sign in with `gh auth login`, set GITHUB_TOKEN, or paste a token when prompted")
+    }
     Ok(token.trim().to_string())
 }
 
 fn device_info(config: &Config) -> DeviceInfo {
     DeviceInfo {
-        id: config.device_id.clone(), name: config.device_name.clone(), platform: std::env::consts::OS.to_string(),
-        arch: std::env::consts::ARCH.to_string(), hostname: config::default_device_name(), app_version: env!("CARGO_PKG_VERSION").to_string(),
+        id: config.device_id.clone(),
+        name: config.device_name.clone(),
+        platform: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        hostname: config::default_device_name(),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
 
@@ -104,8 +119,6 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
     let (ledger, mode) = if full || previous.is_none() {
         (collector::collect(device_info(&config), None)?, "full")
     } else {
-        // Re-read a two-day overlap. This catches late writes while leaving the
-        // process completely absent between scheduled one-shot runs.
         let since = (Local::now().date_naive() - Duration::days(2)).format("%Y-%m-%d").to_string();
         let partial = collector::collect(device_info(&config), Some(since.clone()))?;
         (collector::merge_incremental(previous.unwrap(), partial, &since), "incremental")
@@ -125,18 +138,7 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
     Ok(())
 }
 
-fn setup(repo: Option<String>, join: Option<String>, token: Option<String>, device: Option<String>, interval: u32, no_schedule: bool) -> Result<()> {
-    let token = resolve_token(token)?;
-    let config = if let Some(code) = join {
-        config::from_join(&code, token, device)?
-    } else {
-        let repo = match repo { Some(repo) => repo, None => prompt_line("GitHub repository (OWNER/REPO): ")? };
-        if repo.trim().is_empty() { bail!("repository is required"); }
-        config::new_config(&repo, token, device, interval)?
-    };
-    let github = GithubClient::new(config.repo.clone(), config.github_token.clone())?;
-    github.validate().context("cannot use the selected GitHub repository")?;
-    config::save(&config)?;
+fn finish_onboarding(config: &Config, no_schedule: bool) -> Result<()> {
     println!("Collecting the first local snapshot...");
     run_sync(true, false)?;
     if !no_schedule {
@@ -144,24 +146,55 @@ fn setup(repo: Option<String>, join: Option<String>, token: Option<String>, devi
             Ok(description) => println!("Automatic sync: {description}"),
             Err(error) => {
                 eprintln!("Automatic timer could not be installed: {error}");
-                eprintln!("Run `token-monitor sync` manually, or rerun setup after enabling the OS scheduler.");
+                eprintln!("You can still run `token-monitor sync` manually.");
             }
         }
     }
     println!();
-    println!("Dashboard: {}", config::dashboard_url(&config));
-    println!("Join code (contains the dashboard decryption key; share only with your own devices):");
-    println!("{}", config::join_code(&config)?);
+    println!("Dashboard:");
+    println!("{}", config::dashboard_url(config));
     println!();
-    println!("No monitor process stays resident. The OS timer starts one short Rust process only when a sync is due.");
+    println!("Add another device with this single command:");
+    println!("token-monitor join '{}'", config::join_code(config)?);
+    println!();
+    println!("No Token Monitor process stays resident between scheduled syncs.");
     Ok(())
+}
+
+fn setup(repo: Option<String>, token: Option<String>, device: Option<String>, interval: u32, no_schedule: bool) -> Result<()> {
+    let token = resolve_token(token)?;
+    let repo = match repo {
+        Some(repo) => config::normalize_repo(&repo)?,
+        None => {
+            println!("Finding your Token Monitor fork on GitHub...");
+            github::ensure_user_fork(&token).context("could not automatically prepare your Token Monitor fork")?
+        }
+    };
+    let config = config::new_config(&repo, token, device, interval)?;
+    GithubClient::new(config.repo.clone(), config.github_token.clone())?
+        .validate()
+        .context("cannot use the selected Token Monitor fork")?;
+    config::save(&config)?;
+    println!("Workspace: {}", config.repo);
+    finish_onboarding(&config, no_schedule)
+}
+
+fn join(code: String, token: Option<String>, device: Option<String>, no_schedule: bool) -> Result<()> {
+    let token = resolve_token(token)?;
+    let config = config::from_join(&code, token, device)?;
+    GithubClient::new(config.repo.clone(), config.github_token.clone())?
+        .validate()
+        .context("cannot access the Token Monitor fork encoded in this pair code")?;
+    config::save(&config)?;
+    println!("Joined workspace: {}", config.repo);
+    finish_onboarding(&config, no_schedule)
 }
 
 fn status() -> Result<()> {
     let config = config::load()?;
     println!("Token Monitor {}", env!("CARGO_PKG_VERSION"));
     println!("Device: {} ({}/{})", config.device_name, std::env::consts::OS, std::env::consts::ARCH);
-    println!("Repository: {}", config.repo);
+    println!("Workspace fork: {}", config.repo);
     println!("Snapshot branch: {}", GithubClient::snapshot_branch(&config.device_id));
     println!("Interval: {} minutes", config.interval_minutes);
     if let Some(ledger) = config::read_cached_ledger()? {
@@ -170,7 +203,9 @@ fn status() -> Result<()> {
         println!("API-equivalent cost: ${:.2}", ledger.totals.cost_usd);
         println!("Rows: {}", ledger.rows.len());
         println!("Last scan: {} ms wall time", ledger.scan_ms);
-    } else { println!("Last sync: never"); }
+    } else {
+        println!("Last sync: never");
+    }
     println!("Dashboard: {}", config::dashboard_url(&config));
     Ok(())
 }
@@ -180,22 +215,36 @@ fn uninstall(remove_remote: bool, purge: bool) -> Result<()> {
     scheduler::uninstall()?;
     if remove_remote {
         if let Some(ref config) = config {
-            GithubClient::new(config.repo.clone(), config.github_token.clone())?.remove_snapshot_branch(&config.device_id)?;
+            GithubClient::new(config.repo.clone(), config.github_token.clone())?
+                .remove_snapshot_branch(&config.device_id)?;
         }
     }
-    if purge { if let Ok(dir) = config::config_dir() { let _ = fs::remove_dir_all(dir); } }
+    if purge {
+        if let Ok(dir) = config::config_dir() { let _ = fs::remove_dir_all(dir); }
+    }
     println!("Automatic sync removed{}.", if purge { " and local configuration purged" } else { "" });
     Ok(())
 }
 
 fn real_main() -> Result<()> {
     match Cli::parse().command {
-        CommandKind::Setup { repo, join, token, device, interval, no_schedule } => setup(repo, join, token, device, interval, no_schedule),
+        CommandKind::Setup { repo, token, device, interval, no_schedule } => setup(repo, token, device, interval, no_schedule),
+        CommandKind::Join { code, token, device, no_schedule } => join(code, token, device, no_schedule),
         CommandKind::Sync { full, quiet } => run_sync(full, quiet),
         CommandKind::Status => status(),
-        CommandKind::Clients => { for client in collector::supported_clients() { println!("{client}"); } Ok(()) },
-        CommandKind::Join => { let config=config::load()?; println!("{}",config::join_code(&config)?); println!("{}",config::dashboard_url(&config)); Ok(()) },
-        CommandKind::Dashboard => { println!("{}",config::dashboard_url(&config::load()?)); Ok(()) },
+        CommandKind::Clients => {
+            for client in collector::supported_clients() { println!("{client}"); }
+            Ok(())
+        }
+        CommandKind::Invite => {
+            let config = config::load()?;
+            println!("token-monitor join '{}'", config::join_code(&config)?);
+            Ok(())
+        }
+        CommandKind::Dashboard => {
+            println!("{}", config::dashboard_url(&config::load()?));
+            Ok(())
+        }
         CommandKind::Uninstall { remove_remote, purge } => uninstall(remove_remote, purge),
     }
 }
