@@ -7,3 +7,4 @@ Token Monitor v1.1.0
 - static musl Linux binaries for old-glibc compatibility
 - Windows PowerShell 5.1 installer compatibility
 - post-merge release and installer verification gate
+- retriggered after removing the stuck CI concurrency gate
