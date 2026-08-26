@@ -5,10 +5,9 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  // Keep this list aligned with the Rust ledger's additive Metrics shape.
-  // Session cardinality and duration/performance are deliberately excluded
-  // because they cannot be safely summed across every grouping dimension.
-  const METRIC_KEYS = ['input','output','cacheRead','cacheWrite','reasoning','messages','costUsd'];
+  const METRIC_KEYS = [
+    'input','output','cacheRead','cacheWrite','reasoning','messages','costUsd','planCostUsd'
+  ];
 
   function totalTokens(row) {
     return Number(row.input || 0)
@@ -23,12 +22,15 @@
   }
 
   function sumRows(rows) {
+    const source = rows || [];
     const out = Object.fromEntries(METRIC_KEYS.map(key => [key, 0]));
-    for (const row of rows || []) {
+    for (const row of source) {
       for (const key of METRIC_KEYS) out[key] += Number(row[key] || 0);
     }
     out.totalTokens = totalTokens(out);
-    out.costLowerBound = (rows || []).some(row => Boolean(row.costLowerBound));
+    out.costLowerBound = source.some(row => Boolean(row.costLowerBound));
+    out.planCostAvailable = source.some(row => Boolean(row.planCostAvailable));
+    out.planCostIncomplete = source.some(row => row.client === 'codex' && !row.planCostAvailable);
     return out;
   }
 
@@ -107,7 +109,7 @@
     const columns = [
       'date','deviceName','platform','client','upstreamVendor','routeProvider',
       'routeType','provider','model','tier','input','cacheRead','cacheWrite',
-      'output','reasoning','messages','costUsd','costLowerBound'
+      'output','reasoning','messages','planCostUsd','planCostAvailable','costUsd','costLowerBound'
     ];
     const quote = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
     return [
