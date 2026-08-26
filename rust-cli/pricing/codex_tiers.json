@@ -1,48 +1,88 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "currency": "USD",
   "updated_at": "2026-08-26",
-  "standard_source": "https://developers.openai.com/api/docs/pricing",
-  "fast_source": "https://openai.com/api-fast-mode/",
+  "api_standard_source": "https://developers.openai.com/api/docs/pricing",
+  "api_fast_source": "https://openai.com/api-fast-mode/",
+  "plan_rate_source": "https://help.openai.com/en/articles/20001415",
+  "launch_rate_source": "https://openai.com/index/previewing-gpt-5-6-sol/",
   "long_context_threshold_tokens": 272000,
   "notes": [
-    "Rates are API-equivalent estimates, not ChatGPT/Codex subscription billing records.",
-    "Priority processing was renamed Fast mode on 2026-07-30; both priority and fast service_tier values map to the fast table.",
-    "GPT-5.6 cache-write prices are explicit official rates.",
-    "Long-context selection is request-level and applies when input_tokens exceeds 272000."
+    "api is the current API-equivalent estimate. GPT-5.6 Sol promotional API/token-billed pricing is $4/$0.40/$20 for standard short context; API Fast uses the explicit OpenAI Fast-mode table.",
+    "plan is an included-plan / legacy-meter planning equivalent, not an invoice. OpenAI states Sol promotional pricing does not change included plan usage, 5-hour or weekly limits, or legacy credit rates.",
+    "Sol plan-equivalent standard therefore preserves the launch basis $5/$0.50/$30; cache writes use 1.25x uncached input. The Codex/Work Fast legacy-meter multiplier is 2.5x where the rate card applies it.",
+    "Terra and Luna plan-equivalent bases follow their reduced subscription consumption because OpenAI explicitly states those reductions are reflected in paid subscriptions.",
+    "Long context applies when request input exceeds 272000 tokens: input/cached/cache-write 2x and output 1.5x.",
+    "priority and fast service_tier values both normalize to fast."
   ],
   "aliases": {
     "gpt-5.6": "gpt-5.6-sol"
   },
   "models": {
     "gpt-5.6-sol": {
-      "standard": {
-        "short": { "input": 4.0, "cached_input": 0.4, "cache_write": 5.0, "output": 20.0 },
-        "long":  { "input": 8.0, "cached_input": 0.8, "cache_write": 10.0, "output": 30.0 }
+      "api": {
+        "standard": {
+          "short": { "input": 4.0, "cached_input": 0.4, "cache_write": 5.0, "output": 20.0 },
+          "long":  { "input": 8.0, "cached_input": 0.8, "cache_write": 10.0, "output": 30.0 }
+        },
+        "fast": {
+          "short": { "input": 8.0, "cached_input": 0.8, "cache_write": 10.0, "output": 40.0 },
+          "long":  { "input": 16.0, "cached_input": 1.6, "cache_write": 20.0, "output": 60.0 }
+        }
       },
-      "fast": {
-        "short": { "input": 8.0, "cached_input": 0.8, "cache_write": 10.0, "output": 40.0 },
-        "long":  { "input": 16.0, "cached_input": 1.6, "cache_write": 20.0, "output": 60.0 }
+      "plan": {
+        "standard": {
+          "short": { "input": 5.0, "cached_input": 0.5, "cache_write": 6.25, "output": 30.0 },
+          "long":  { "input": 10.0, "cached_input": 1.0, "cache_write": 12.5, "output": 45.0 }
+        },
+        "fast": {
+          "short": { "input": 12.5, "cached_input": 1.25, "cache_write": 15.625, "output": 75.0 },
+          "long":  { "input": 25.0, "cached_input": 2.5, "cache_write": 31.25, "output": 112.5 }
+        }
       }
     },
     "gpt-5.6-terra": {
-      "standard": {
-        "short": { "input": 2.0, "cached_input": 0.2, "cache_write": 2.5, "output": 12.0 },
-        "long":  { "input": 4.0, "cached_input": 0.4, "cache_write": 5.0, "output": 18.0 }
+      "api": {
+        "standard": {
+          "short": { "input": 2.0, "cached_input": 0.2, "cache_write": 2.5, "output": 12.0 },
+          "long":  { "input": 4.0, "cached_input": 0.4, "cache_write": 5.0, "output": 18.0 }
+        },
+        "fast": {
+          "short": { "input": 4.0, "cached_input": 0.4, "cache_write": 5.0, "output": 24.0 },
+          "long":  { "input": 8.0, "cached_input": 0.8, "cache_write": 10.0, "output": 36.0 }
+        }
       },
-      "fast": {
-        "short": { "input": 4.0, "cached_input": 0.4, "cache_write": 5.0, "output": 24.0 },
-        "long":  { "input": 8.0, "cached_input": 0.8, "cache_write": 10.0, "output": 36.0 }
+      "plan": {
+        "standard": {
+          "short": { "input": 2.0, "cached_input": 0.2, "cache_write": 2.5, "output": 12.0 },
+          "long":  { "input": 4.0, "cached_input": 0.4, "cache_write": 5.0, "output": 18.0 }
+        },
+        "fast": {
+          "short": { "input": 5.0, "cached_input": 0.5, "cache_write": 6.25, "output": 30.0 },
+          "long":  { "input": 10.0, "cached_input": 1.0, "cache_write": 12.5, "output": 45.0 }
+        }
       }
     },
     "gpt-5.6-luna": {
-      "standard": {
-        "short": { "input": 0.2, "cached_input": 0.02, "cache_write": 0.25, "output": 1.2 },
-        "long":  { "input": 0.4, "cached_input": 0.04, "cache_write": 0.5, "output": 1.8 }
+      "api": {
+        "standard": {
+          "short": { "input": 0.2, "cached_input": 0.02, "cache_write": 0.25, "output": 1.2 },
+          "long":  { "input": 0.4, "cached_input": 0.04, "cache_write": 0.5, "output": 1.8 }
+        },
+        "fast": {
+          "short": { "input": 0.4, "cached_input": 0.04, "cache_write": 0.5, "output": 2.4 },
+          "long":  { "input": 0.8, "cached_input": 0.08, "cache_write": 1.0, "output": 3.6 }
+        }
       },
-      "fast": {
-        "short": { "input": 0.4, "cached_input": 0.04, "cache_write": 0.5, "output": 2.4 },
-        "long":  { "input": 0.8, "cached_input": 0.08, "cache_write": 1.0, "output": 3.6 }
+      "plan": {
+        "standard": {
+          "short": { "input": 0.2, "cached_input": 0.02, "cache_write": 0.25, "output": 1.2 },
+          "long":  { "input": 0.4, "cached_input": 0.04, "cache_write": 0.5, "output": 1.8 }
+        },
+        "fast": {
+          "short": { "input": 0.5, "cached_input": 0.05, "cache_write": 0.625, "output": 3.0 },
+          "long":  { "input": 1.0, "cached_input": 0.1, "cache_write": 1.25, "output": 4.5 }
+        }
       }
     }
   }
