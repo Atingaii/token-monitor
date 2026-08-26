@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/assets/hero.svg" alt="Token Monitor — serverless cross-device usage analytics for AI coding tools" width="100%" />
+  <img src=".github/assets/hero.svg" alt="Token Monitor" width="100%" />
 </p>
 
 <p align="center">
@@ -11,103 +11,96 @@
 </p>
 
 <p align="center">
-  <strong>One lightweight CLI. Every device. Mature token accounting. One encrypted analytics dashboard.</strong>
+  <strong>One lightweight CLI. Multiple AI coding clients. Every device in one encrypted analytics dashboard.</strong>
 </p>
 
 <p align="center">
   <a href="README.zh-CN.md">简体中文</a> ·
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#dashboard-access">Dashboard Access</a> ·
-  <a href="#pricing-policy">Pricing</a> ·
-  <a href="SOURCES.md">Sources</a>
+  <a href="https://atingaii.github.io/token-monitor/">Dashboard</a> ·
+  <a href="SOURCES.md">Accounting Sources</a> ·
+  <a href="https://github.com/Atingaii/token-monitor/releases">Releases</a>
 </p>
 
-Token Monitor is a **serverless, cross-device analytics system for AI coding tools**. A prebuilt Rust CLI scans local usage through pinned Tokscale Core, keeps model vendor and actual request route separate, calculates a mature-source subscription-equivalent cost, encrypts each device snapshot, and synchronizes it to the user's own Token Monitor fork.
+## What is Token Monitor?
 
-The central GitHub Pages dashboard is a static application. It reads encrypted snapshot branches and decrypts them locally after the user enters one memorable dashboard password. There is no Electron app, Node.js runtime, Python environment, Docker stack, VPS, database, permanent hub process, or second telemetry repository to operate.
+Token Monitor is a **serverless, cross-device, CLI-only usage analytics system for AI coding tools**.
 
-> **v1.1 changes the dashboard and pricing model.** The dashboard no longer requires a long `#key=...` URL. GPT-5.6 pricing follows the CC Switch-compatible subscription-equivalent rate policy rather than the lower generic API catalog price.
+It uses the pinned **Tokscale Core v4.14.0** for mature client discovery, parsing, deduplication, token semantics and model normalization. Token Monitor adds route evidence, subscription-equivalent pricing, encrypted cross-device snapshots and a static GitHub Pages dashboard.
 
-## Why Token Monitor
+There is no Electron runtime, Node daemon, Python service, Docker stack, VPS, telemetry database or always-on hub to operate.
 
-Token Monitor is built for questions a single-machine counter cannot answer:
+## Highlights
 
-- How many tokens did all of my machines use together?
-- Which device, client, model, provider route, or service tier consumed them?
-- Was a GPT/Claude request routed through an official API, a cloud provider, OpenRouter, or a relay?
-- What is the **subscription-equivalent** value of that usage under a documented mature-project rate policy?
-- Can this run continuously without leaving a monitoring daemon in memory?
-
-## Core principles
-
-| Principle | Implementation |
+| Capability | Implementation |
 | --- | --- |
-| **Low overhead** | No resident daemon. Native OS schedulers launch a short one-shot sync and exit. |
-| **Cross platform** | Native release/test targets for Windows, Linux, and macOS on x64 and ARM64. |
-| **Mature token accounting** | Client discovery, parsing, deduplication and token-bucket semantics come from pinned **Tokscale v4.14.0**. |
-| **Mature pricing sources** | General prices follow CC Switch's models.dev source; GPT-5.6 uses guarded CC Switch rates independently cross-checked against Sub2API. |
-| **Evidence-first routing** | Model vendor and actual request route are separate. A GPT model alone never proves “OpenAI official”. |
-| **Encrypted telemetry** | Aggregate device ledgers remain AES-256-GCM encrypted in `tm-ledger-*` branches. |
-| **Memorable dashboard access** | A user password wraps the random workspace key with PBKDF2 + AES-GCM; the password is not stored or put in the URL. |
-| **Fail closed on tier attribution** | Codex tier rows can replace grouping only when their daily additive token total exactly reconciles with Tokscale. |
+| Multi-client accounting | Reuses Tokscale v4.14.0 parsers/scanners instead of maintaining duplicate client parsers |
+| Cross-device | Windows, Linux and macOS on x64 and ARM64 |
+| Zero resident process | Native OS schedulers launch a short `sync --quiet` run and exit |
+| Encrypted snapshots | AES-256-GCM device ledgers in per-device `tm-ledger-*` branches |
+| Memorable dashboard access | No long `#key=...` URL; the same password unlocks the workspace from any browser |
+| Route provenance | Model vendor, route provider, route type and raw provider remain separate dimensions |
+| Canonical official route | Proven first-party routes use one `official` route-provider bucket; raw provider evidence remains available |
+| Mature pricing | General catalog follows CC Switch's models.dev source; GPT-5.6 is guarded to CC Switch/Sub2API-compatible subscription-equivalent rates |
+| Precise charts | Readable K/M/B/T axes plus exact hover/table values and adaptive labels |
+| Idle-write suppression | No GitHub snapshot write when accounting has not changed |
 
 ## Architecture
 
 ```text
- Windows / Linux / macOS
-          │
-          │ local usage files / databases
-          ▼
-      Tokscale Core v4.14.0
-  parsing · dedup · token semantics
-        model normalization
-          │
-          ├──────────────► Codex tier evidence adapter
-          │                 (request-level only)
-          ▼
-      token-monitor
-  route evidence · pricing · encryption
-          │
-          ├─ AES-256-GCM device ledger
-          │
-          └─ password-wrapped workspace key
-                     │
-                     ▼
- YOUR_NAME/token-monitor fork
- ├─ main                       project source
- ├─ tm-dashboard               access.json only
- ├─ tm-ledger-<device-A>       encrypted ledger.json
- ├─ tm-ledger-<device-B>       encrypted ledger.json
- └─ tm-ledger-<device-C>       encrypted ledger.json
-                     │
-                     ▼
- https://atingaii.github.io/token-monitor/
- password → local key unwrap → local ledger decrypt
+Windows / Linux / macOS
+        │
+        │ local AI coding usage
+        ▼
+Tokscale Core v4.14.0
+parser · dedup · token semantics · model normalization
+        │
+        ▼
+Token Monitor
+route evidence · subscription-equivalent pricing
+        │
+        ├── AES-256-GCM device ledger
+        ▼
+YOUR_NAME/token-monitor
+├── main                       source code
+├── tm-dashboard               password-wrapped workspace key only
+├── tm-ledger-<device-A>       encrypted ledger.json
+├── tm-ledger-<device-B>       encrypted ledger.json
+└── tm-ledger-<device-C>       encrypted ledger.json
+        │
+        ▼
+Atingaii GitHub Pages
+password → local key unwrap → local ledger decrypt → analytics
 ```
 
-Device sync never writes telemetry to `main`. Each device controls only its own history-free `tm-ledger-<device-hash>` root snapshot. `tm-dashboard` contains only the password-wrapped random workspace key; it does not contain the password or raw usage.
+Telemetry never lands on `main`. Each device force-moves only its own history-free snapshot branch.
 
-## Quick Start
+## Install
 
-### 1. Install
-
-**macOS / Linux**
+### macOS / Linux
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Atingaii/token-monitor/main/install.sh | sh
 ```
 
-**Windows PowerShell**
+Linux v1.1+ artifacts are built as **static musl binaries**. Release CI rejects Linux artifacts that still contain a dynamic ELF interpreter or glibc symbol-version dependency, avoiding the old `GLIBC_2.xx not found` failure on older distributions.
+
+Because `curl | sh` runs in a child shell, it cannot mutate the parent shell's PATH. The installer prefers an already-active user bin directory. Otherwise it prints an absolute setup command that works immediately, for example:
+
+```bash
+'/home/you/.local/bin/token-monitor' setup
+```
+
+### Windows PowerShell
 
 ```powershell
 irm https://raw.githubusercontent.com/Atingaii/token-monitor/main/install.ps1 | iex
 ```
 
-The installers download the native release asset and its `.sha256` file, verify the checksum, and run a native `--version` smoke check. Rust, Node.js, Python and Docker are not required.
+Windows PowerShell 5.1 and PowerShell 7 are supported. The installer includes TLS 1.2 compatibility, native x64/ARM64 detection, SHA-256 verification and PATH fallback handling.
 
-> **Linux PATH note:** a `curl | sh` child shell cannot mutate the PATH of its parent shell. The installer therefore prefers an already-active user PATH directory. If none exists, it prints the exact absolute `.../token-monitor setup` command that works immediately; new terminals receive the profile PATH update.
+> Do **not** use the Unix `curl -fsSL ... | sh` command in Windows PowerShell. In Windows PowerShell, `curl` commonly aliases `Invoke-WebRequest`, which does not understand Unix curl's `-fsSL` flags.
 
-### 2. First device
+## First device
 
 ```bash
 token-monitor setup
@@ -115,224 +108,168 @@ token-monitor setup
 
 Setup automatically:
 
-1. resolves a GitHub write credential from a flag, environment variable, authenticated `gh`, or a hidden prompt;
-2. finds your Token Monitor fork or creates it when possible;
-3. creates the random 256-bit workspace encryption key;
-4. asks you to create a **dashboard password** in a hidden prompt;
-5. publishes only a password-wrapped copy of the random workspace key to `tm-dashboard/access.json`;
-6. performs the first full local scan and encrypted snapshot;
-7. installs the native low-overhead scheduler;
-8. prints the stable Dashboard URL and the join command for another device.
+1. resolves a GitHub write credential;
+2. finds or creates your Token Monitor fork;
+3. generates a random 256-bit workspace key;
+4. asks for a memorable dashboard password using hidden terminal input;
+5. wraps the workspace key with PBKDF2-HMAC-SHA256 + AES-256-GCM and publishes only the wrapped manifest to `tm-dashboard/access.json`;
+6. performs the first full local scan and encrypted snapshot upload;
+7. installs the native low-load scheduler;
+8. prints the stable Dashboard URL and another-device join command.
 
-The URL is short and stable:
+The Dashboard URL is now stable:
 
 ```text
 https://atingaii.github.io/token-monitor/?repo=YOUR_NAME/token-monitor
 ```
 
-There is no `#key=...` suffix in v1.1.
+There is no encryption key in the URL. A new browser, another machine or a private window only needs the same dashboard password.
 
-For non-interactive setup, use `TOKEN_MONITOR_DASHBOARD_PASSWORD`. Avoid putting a real password directly in shell history with `--dashboard-password` unless you understand the exposure.
+## Add another device
 
-### 3. Open the dashboard
-
-Open the same URL in **any browser** and enter the dashboard password. Nothing needs to have been stored in that browser beforehand.
-
-### 4. Add another device
-
-The first machine prints a command like:
+The first device prints:
 
 ```bash
-token-monitor join 'eyJ2ZXJzaW9uIjoyLC4uLn0'
+token-monitor join '<PAIR_CODE>'
 ```
 
-Paste it unchanged on another Windows, Linux, or macOS machine. To print it again:
+The pair code contains the repository, workspace key and sync cadence, but **not** the GitHub token. Treat it as sensitive workspace material.
+
+Print it again with:
 
 ```bash
 token-monitor invite
 ```
 
-The pair code contains the repository, random workspace key, and sync cadence. It does **not** contain a GitHub credential. Treat a pair code as a workspace secret because a joined device must be able to encrypt/decrypt the shared ledgers.
+## Dashboard password model
 
-## Upgrading from v1.0
-
-Re-run the installer to replace the binary, then on **one existing configured device** run:
-
-```bash
-token-monitor password
-token-monitor sync --full
+```text
+memorable password
+  │ PBKDF2-HMAC-SHA256 / 310,000 iterations / random salt
+  ▼
+wrapping key
+  │ AES-256-GCM
+  ▼
+random workspace key
+  │ AES-256-GCM
+  ▼
+per-device ledger.json
 ```
 
-The first command creates `tm-dashboard/access.json` from your existing workspace key without changing that key. The second rewrites the local ledger with the v1.1 pricing metadata and current pricing policy. Existing v1.0 fragment URLs remain readable as a migration path, but new `token-monitor dashboard` output never exposes the workspace key in the URL.
+GitHub stores only the salt, nonce, iteration count and ciphertext. The password is not uploaded and never appears in the URL. The browser derives the wrapping key and decrypts ledgers locally.
 
-## Dashboard access
+This remains a static-site architecture, so an attacker can download `access.json` and attempt offline password guessing. Use a longer memorable passphrase rather than a weak numeric password.
 
-The dashboard password is **not** the AES ledger key.
-
-1. Setup generates a random 256-bit workspace key.
-2. Your password is processed with **PBKDF2-HMAC-SHA256 (310,000 iterations)** and a random salt.
-3. The derived key AES-256-GCM encrypts the random workspace key.
-4. Only that small envelope is stored as `tm-dashboard/access.json`.
-5. A browser repeats the PBKDF2 derivation and unwraps the workspace key locally.
-6. Device ledgers are then decrypted locally with the random workspace key.
-
-The password is not uploaded to GitHub, embedded in the pair code, or appended to the Dashboard URL.
-
-Because this is still a public static-site architecture, an attacker can download the password-wrapped envelope and attempt offline guesses. Use a strong, memorable passphrase rather than a trivial 8-character password. This is not a server-side account/login system.
-
-Change the dashboard password from any configured device:
+Change the password with:
 
 ```bash
 token-monitor password
 ```
 
-Changing the password re-wraps the same workspace key; it does not rewrite all device ledgers.
+Changing the password re-wraps the same workspace key; device ledgers do not need to be rewritten.
+
+## Upgrade from v1.0
+
+Re-run the platform installer, then on any already-configured device run:
+
+```bash
+token-monitor password
+token-monitor sync
+```
+
+v1.1 detects the older ledger/pricing schema, discards the stale local cache for accounting purposes and automatically performs **one full rescan + full historical reprice**. Later runs return to the normal two-day incremental overlap. This prevents a mixed ledger where recent days use the new rate card but older history keeps v1.0 prices.
+
+Legacy `#key=...` URLs remain readable for migration, but v1.1 no longer emits them.
 
 ## Pricing policy
 
-The Dashboard reports **subscription-equivalent estimated cost**, not an OpenAI/Anthropic invoice and not the number of dollars deducted from a ChatGPT/Codex subscription.
+The dashboard reports **subscription-equivalent cost**, not an invoice and not the actual amount deducted by a ChatGPT/Codex subscription.
 
-### General models
+### GPT-5.6
 
-The rate catalog follows the mature CC Switch integration with:
+GPT-5.6 uses CC Switch's current built-in rate card, independently cross-checked against Sub2API's fallback values. USD per 1M tokens:
+
+| Model | Input | Cache Read | Cache Write | Output |
+| --- | ---: | ---: | ---: | ---: |
+| GPT-5.6 Sol | **$5.00** | **$0.50** | **$6.25** | **$30.00** |
+| GPT-5.6 Terra | $2.00 | $0.20 | $2.50 | $12.00 |
+| GPT-5.6 Luna | $0.20 | $0.02 | $0.25 | $1.20 |
+
+GPT-5.6 Fast/Priority uses explicit **2×** rates. The `>272K` long-context decision is made at **request granularity before aggregation**, so a multi-million-token day is never mistaken for one long-context request.
+
+Example:
+
+```text
+182,000 fresh input × $5/M
+6,080,000 cache read × $0.50/M
+12,000 output × $30/M
+≈ $4.31
+```
+
+That is why the prior API-like `$4/$20/$0.40` card produced roughly `$3.40`, while the v1.1 CC Switch-compatible subscription-equivalent card produces roughly `$4.31` for the same usage.
+
+### Other models
+
+The general catalog follows the same public source CC Switch can sync:
 
 ```text
 https://models.dev/api.json
 ```
 
-Token Monitor applies those prices only after Tokscale has already normalized raw counters into fresh input, cache read, cache write, output, and reasoning buckets. Unknown prices are not inferred from nearby model names.
+If the same normalized model appears under several providers, Token Monitor deterministically prefers the model family's canonical provider. Missing billable buckets are marked as lower-bound pricing rather than guessed from a neighboring model.
 
-### GPT-5.6 guarded rates
+See [`SOURCES.md`](SOURCES.md) for exact provenance and responsibilities.
 
-GPT-5.6 intentionally does **not** follow a lower generic API catalog rate when that would change the intended subscription-equivalent accounting policy. The guarded card follows CC Switch and is independently cross-checked against Sub2API:
-
-| Model | Input / MTok | Output / MTok | Cache read / MTok | Cache write / MTok |
-| --- | ---: | ---: | ---: | ---: |
-| `gpt-5.6-sol` | **$5.00** | **$30.00** | **$0.50** | **$6.25** |
-| `gpt-5.6-terra` | $2.00 | $12.00 | $0.20 | $2.50 |
-| `gpt-5.6-luna` | $0.20 | $1.20 | $0.02 | $0.25 |
-
-`gpt-5.6` and its effort aliases are treated as Sol. GPT-5.6 `fast` / `priority` uses the explicit **2×** price card.
-
-For a request with more than **272K total input-side tokens**, the compatible long-context policy is applied at **request granularity before aggregation**:
-
-- fresh input × 2
-- cache read × 2
-- cache write × 2
-- output (including reasoning tokens) × 1.5
-
-If a raw client does not expose a billable bucket separately—for example a missing cache-write field—the row is marked as a **lower-bound** cost rather than presented as exact.
-
-Full provenance is in [`SOURCES.md`](SOURCES.md).
-
-## Codex service tiers
-
-Tokscale remains the canonical Codex token total. A narrow adapter derived from the MIT-licensed `falyx6851-byte/codex-monitor` state machine extracts request-level `standard` / `fast` evidence.
-
-The tier split is accepted only when its **daily additive token total exactly equals Tokscale's daily total**. The two parsers' record/message counts are allowed to differ because they expose different record granularities. This fixes the v1.0 behavior where valid Fast evidence could be discarded merely because record counts did not match.
-
-Tier requests remain request-granular through pricing so the 272K threshold cannot accidentally be applied to a whole day's aggregate.
-
-## Provider and route identity
-
-The ledger keeps distinct fields for model and route identity:
+## Route semantics
 
 | Field | Meaning | Example |
 | --- | --- | --- |
 | `model` | Canonical model | `gpt-5.6-sol` |
-| `upstreamVendor` | Model family owner | `openai` |
-| `routeProvider` | Actual route/billing provider when evidenced | `azure-openai`, `aws-bedrock`, `openrouter`, `newapi` |
-| `routeType` | Route class | `official`, `cloud`, `aggregator`, `relay`, `self-hosted`, `unknown` |
+| `upstreamVendor` | Model owner/family | `openai` |
+| `routeProvider` | Actual normalized route supplier | `official`, `azure-openai`, `openrouter`, `newapi` |
+| `routeType` | Route class | `official`, `cloud`, `aggregator`, `relay`, `unknown` |
+| `provider` | Raw source provider | retained for auditing |
 
-A model-family inference may set `upstreamVendor`; it never proves `routeType=official`. Official/cloud/relay identity requires source or configuration evidence.
+When route evidence proves a first-party OpenAI/Anthropic/Google/etc. route, `routeProvider` is normalized to `official`. The vendor remains in `upstreamVendor`, so model ownership is not lost. Seeing a GPT or Claude model alone is **not** sufficient evidence to call the route official.
 
 ## Dashboard
 
-The v1.1 dashboard uses a restrained modern admin-console layout:
+v1.1 uses a modern, restrained admin-console layout: neutral surfaces, light borders, a controlled blue accent, compact filters and a collapsible sidebar. It is visually inspired by the information density and layout direction of current New API, but Token Monitor does not copy New API's AGPL implementation.
 
-- collapsible desktop sidebar (collapse state is only a UI preference)
-- responsive mobile drawer
-- Today / 7d / 30d / current month / all / custom ranges
-- device, client, model, upstream vendor, route provider, route type, raw provider and tier filters
-- Total Tokens, subscription-equivalent cost, input, cache, output/reasoning and record KPIs
+Features include:
+
+- Today / 7d / 30d / current month / all / custom date range
+- device, client, model, model vendor, route provider, route type, raw provider and tier filters
 - line, area, bar, stacked bar, donut, treemap and table views
-- device status table and raw aggregate-data table
 - CSV export
 - light/dark themes
-- visible pricing-source provenance
-- browser-local PBKDF2 + AES-GCM unlock/decryption
-
-A user's fork does **not** need its own GitHub Pages deployment. The central dashboard reads encrypted branches from the repository in `?repo=OWNER/REPO`.
-
-## Multi-client accounting
-
-Token Monitor scans the client set exposed by pinned Tokscale Core instead of maintaining independent parsers. Run:
-
-```bash
-token-monitor clients
-```
-
-for the exact embedded client list on the current release.
-
-## GitHub authentication
-
-Credential resolution order:
-
-1. `--token`
-2. `TOKEN_MONITOR_GITHUB_TOKEN`
-3. `GITHUB_TOKEN`
-4. `GH_TOKEN`
-5. authenticated `gh auth token`
-6. hidden terminal prompt
-
-The credential is stored only in the device's private local configuration and is used to manage encrypted snapshot/access branches in the selected fork. It is never sent to the static dashboard.
+- collapsible desktop sidebar and mobile drawer
+- adaptive Y-axis nice scaling and left margin
+- readable K/M/B/T axis labels with full exact values in tooltips
+- adaptive X-axis label sampling/rotation
+- full comma-separated integer token values in tables and four-decimal cost detail
 
 ## Background load
-
-There is no resident Token Monitor process.
 
 | Platform | Scheduler |
 | --- | --- |
 | Windows | Task Scheduler |
-| macOS | `launchd` |
-| Linux | `systemd --user`, with cron fallback |
+| macOS | launchd |
+| Linux | `systemd --user` timer with cron fallback |
 
-The default cadence is 15 minutes. Incremental scans rescan a two-day overlap to accommodate delayed writes/day boundaries. When accounting and pricing identity have not changed, no new GitHub snapshot is written.
+Default cadence is 15 minutes. No Token Monitor process remains resident. Unchanged accounting snapshots skip the GitHub write entirely.
 
-## Windows and Linux notes
+## Privacy boundary
 
-### Linux
-
-If the installer reports that its install directory was not already on your current PATH, use the exact absolute setup command printed by the installer. This is necessary because POSIX does not allow a child `curl | sh` process to mutate its parent's environment.
-
-The scheduler first tries a user `systemd` timer. Headless/minimal systems without a usable user bus fall back to `crontab`. If neither is available, setup remains usable and tells you to run `token-monitor sync` manually.
-
-### Windows
-
-The installer supports Windows PowerShell 5.1 and modern PowerShell, enables TLS 1.2 compatibility where necessary, installs under Local App Data by default, updates both the current process PATH and user PATH, and prints the absolute executable path as a fallback.
-
-Task Scheduler receives a quoted native executable path so usernames/install paths containing spaces remain supported.
-
-## Privacy model
-
-Encrypted ledgers contain only normalized aggregate fields such as:
+Encrypted ledgers may contain:
 
 - date and device identity
-- client, model, provider/route labels, optional service tier
-- input/cache/output/reasoning token buckets
+- client/model/provider/route/tier labels
+- input/cache-read/cache-write/output/reasoning token buckets
 - additive record count
-- subscription-equivalent cost and lower-bound flag
-- pricing provenance metadata
+- subscription-equivalent cost and lower-bound flags
 
-They do **not** contain:
-
-- prompts or assistant responses
-- reasoning text
-- source code or project contents
-- project paths
-- full JSONL/SQLite session data
-- `auth.json`
-- API keys or GitHub tokens
+They do **not** upload prompts, assistant responses, reasoning text, source code, project contents, project paths, full JSONL/SQLite sessions, `auth.json`, API keys or GitHub tokens.
 
 ## Commands
 
@@ -348,41 +285,33 @@ token-monitor dashboard
 token-monitor uninstall [--remove-remote] [--purge]
 ```
 
-## Verification and release gate
+## Release gate
 
-Every pull request is tested on native/hosted runners for:
+A release must pass more than a Linux compile:
 
-- Linux x86_64
-- Linux ARM64
+- Linux x86_64 musl
+- Linux ARM64 musl
 - Windows x86_64
 - Windows ARM64
-- macOS Apple Silicon
 - macOS Intel
-- Rust `clippy`
-- dashboard JavaScript/analytics/privacy regressions
-- the complete pinned `tokscale-core` v4.14.0 parser/scanner suite
+- macOS Apple Silicon
+- Rust clippy
+- dashboard JS / analytics / privacy regressions
+- pinned Tokscale v4.14.0 parser/scanner regression suite
+- post-publish install from the real GitHub Release assets
+- Windows PowerShell 7 and **Windows PowerShell 5.1** install smoke tests
+- Linux ELF static-link / GLIBC symbol-version guards
 
-Release builds repeat native tests/builds for all six targets. **After the GitHub Release is published**, a second six-runner matrix downloads the public release through the real `install.sh` / `install.ps1`, verifies SHA-256, executes the installed binary and runs CLI smoke tests. A successful build artifact alone is therefore not the final release gate.
+## Provenance and license
 
-## Development
+Token Monitor is MIT licensed. Mature implementation sources and adaptations are documented in [`NOTICE`](NOTICE) and [`SOURCES.md`](SOURCES.md), including:
 
-```bash
-git clone https://github.com/Atingaii/token-monitor.git
-cd token-monitor
-cargo test --workspace --all-targets
-cargo clippy --workspace --all-targets
-node web/analytics.test.cjs
-```
+- `Javis603/token-monitor`
+- `junhoyeo/tokscale` v4.14.0
+- `falyx6851-byte/codex-monitor`
+- CC Switch's models.dev pricing synchronization approach and GPT-5.6 rate reference
+- Sub2API's LiteLLM pricing source and GPT-5.6 fallback cross-check
 
-## Sources and license
+## Contributing
 
-Token Monitor is MIT licensed. Significant implementation provenance is documented in [`NOTICE`](NOTICE) and [`SOURCES.md`](SOURCES.md).
-
-Primary mature sources include:
-
-- [`junhoyeo/tokscale`](https://github.com/junhoyeo/tokscale) v4.14.0 — client parsing/token accounting (MIT)
-- [`falyx6851-byte/codex-monitor`](https://github.com/falyx6851-byte/codex-monitor) — Codex request/tier evidence behavior (MIT)
-- [`farion1231/cc-switch`](https://github.com/farion1231/cc-switch) — pricing behavior and models.dev integration (MIT)
-- [`Wei-Shaw/sub2api`](https://github.com/Wei-Shaw/sub2api) — independent GPT-5.6 rate/policy cross-check only (LGPL-3.0; no source code copied or linked)
-
-For security issues, see [`SECURITY.md`](SECURITY.md). For contribution guidance, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`SECURITY.md`](SECURITY.md). For client parsing or token accounting, prefer fixing/upgrading the mature upstream engine rather than adding an unverified duplicate parser inside Token Monitor.
