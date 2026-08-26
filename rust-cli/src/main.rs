@@ -1,3 +1,4 @@
+mod codex_tier;
 mod collector;
 mod config;
 mod crypto;
