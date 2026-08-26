@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub const CURRENT_LEDGER_SCHEMA_VERSION: u32 = 4;
+
 fn is_false(value: &bool) -> bool {
     !*value
 }
