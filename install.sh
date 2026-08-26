@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-BASE="${TOKEN_MONITOR_RELEASE_BASE:-https://token-monitor-v110-dist2-cuidongshan350-1312.vercel.app}"
+BASE="${TOKEN_MONITOR_RELEASE_BASE:-https://token-monitor-v110-final-cuidongshan350-1312.vercel.app}"
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
@@ -37,7 +37,6 @@ choose_install_dir() {
     return
   fi
 
-  # Prefer common user-owned directories that are already active in this shell.
   for candidate in "$HOME/.local/bin" "$HOME/bin" "$HOME/.cargo/bin"; do
     if path_has_dir "$candidate"; then
       printf '%s\n' "$candidate"
@@ -45,7 +44,6 @@ choose_install_dir() {
     fi
   done
 
-  # Reuse another writable HOME-scoped PATH directory when available.
   old_ifs=$IFS
   IFS=:
   for candidate in ${PATH:-}; do
@@ -104,7 +102,6 @@ else
   chmod 0755 "$INSTALL_DIR/token-monitor"
 fi
 
-# Validate the actual native binary before touching shell startup files.
 if ! "$INSTALL_DIR/token-monitor" --version; then
   echo "The downloaded binary could not run on this system." >&2
   if [ "$PLATFORM" = "linux" ]; then
