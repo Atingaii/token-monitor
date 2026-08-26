@@ -6,13 +6,24 @@ This repository was forked from:
   https://github.com/Javis603/token-monitor
   MIT License, Copyright (c) 2026 Javis
 
-The CLI uses the Rust core library from:
-  junhoyeo/tokscale
-  https://github.com/junhoyeo/tokscale
-  pinned to commit 1ec865d4e9e5adf157efb9f5c2dfaf29630d71e5
+Core multi-client parsing, deduplication, model normalization, scanner behavior,
+and general pricing are delegated to:
+  junhoyeo/tokscale v4.14.0
+  https://github.com/junhoyeo/tokscale/tree/v4.14.0
+  commit 1ec865d4e9e5adf157efb9f5c2dfaf29630d71e5
+  MIT License, Copyright (c) 2025 Junho Yeo
 
-Tokscale provides the multi-client local session parsers, scanners, aggregation
-primitives, canonical model normalization, and pricing engine used by this
-rewrite. No raw session content is intentionally uploaded by Token Monitor;
-only normalized aggregate statistics generated locally are included in the
-encrypted device ledger.
+Codex service-tier evidence and tier-aware pricing enhancements are adapted from:
+  falyx6851-byte/codex-monitor
+  https://github.com/falyx6851-byte/codex-monitor
+  MIT License, Copyright (c) 2026 falyx6851-byte
+
+The Codex tier-pricing *logic* follows that implementation, but price data in
+this repository is independently refreshed from current official OpenAI pricing
+sources rather than copying a historical pricing snapshot.
+
+Token Monitor's own code is intentionally limited to cross-device ledger
+transport, encryption/pairing, provider-route enrichment, static dashboard
+presentation, and thin adapters around the upstream accounting engines.
+No raw prompt, response, reasoning text, source code, project content, full
+session transcript, API key, or GitHub credential is uploaded by Token Monitor.
