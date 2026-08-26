@@ -30,10 +30,3 @@ tokio = { version = "1", features = ["rt", "time"] }
 toml = "0.8"
 walkdir = "2"
 tokscale-core = { git = "https://github.com/junhoyeo/tokscale", rev = "1ec865d4e9e5adf157efb9f5c2dfaf29630d71e5", package = "tokscale-core" }
-
-[profile.release]
-lto = true
-codegen-units = 1
-opt-level = 3
-strip = true
-panic = "abort"
