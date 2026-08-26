@@ -1,8 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-/// Additive metrics only. Every field can be safely summed across
-/// date/model/provider/device rows. Non-additive values such as distinct session
-/// count intentionally do not live here.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// Additive accounting metrics only. These are the dimensions Tokscale exposes
+/// with stable semantics across clients and that can be safely summed across
+/// date/model/provider/device rows.
+///
+/// Deliberately excluded: distinct session count and duration/performance. Those
+/// are not universally additive across clients or grouping dimensions.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Metrics {
@@ -12,7 +19,6 @@ pub struct Metrics {
     pub cache_write: i64,
     pub reasoning: i64,
     pub messages: i32,
-    pub duration_ms: i64,
     pub cost_usd: f64,
 }
 
@@ -32,7 +38,6 @@ impl Metrics {
         self.cache_write = self.cache_write.saturating_add(other.cache_write);
         self.reasoning = self.reasoning.saturating_add(other.reasoning);
         self.messages = self.messages.saturating_add(other.messages);
-        self.duration_ms = self.duration_ms.saturating_add(other.duration_ms);
         self.cost_usd += other.cost_usd;
     }
 }
@@ -53,9 +58,9 @@ pub struct UsageRow {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tier: Option<String>,
-    /// `true` only when a specialized source could prove that this row's cost
-    /// is a lower bound (for example missing Codex cache-write counts).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    /// True only when a specialized source can prove the cost is a lower bound
+    /// (for example a Codex record whose cache-write token count is absent).
+    #[serde(default, skip_serializing_if = "is_false")]
     pub cost_lower_bound: bool,
     #[serde(flatten)]
     pub metrics: Metrics,
