@@ -20,188 +20,45 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l-7 7 7 7M22 12H3"/></svg>
         </button>
       </div>
-
       <div class="nav-caption">数据</div>
       <nav class="nav-list">
-        <button class="nav-item active" data-view="overview" data-tooltip="概览">
-          <span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg></span>
-          <span class="nav-label">概览</span>
-        </button>
-        <button class="nav-item" data-view="analysis" data-tooltip="用量分析">
-          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 19V9M10 19V5M16 19v-7M22 19V3"/></svg></span>
-          <span class="nav-label">用量分析</span>
-        </button>
-        <button class="nav-item" data-view="devices" data-tooltip="设备">
-          <span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
-          <span class="nav-label">设备</span>
-        </button>
-        <button class="nav-item" data-view="data" data-tooltip="数据明细">
-          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 5c0 1.1 3.6 2 8 2s8-.9 8-2-3.6-2-8-2-8 .9-8 2zM4 5v6c0 1.1 3.6 2 8 2s8-.9 8-2V5M4 11v6c0 1.1 3.6 2 8 2s8-.9 8-2v-6"/></svg></span>
-          <span class="nav-label">数据明细</span>
-        </button>
+        <button class="nav-item active" data-view="overview" data-tooltip="概览"><span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg></span><span class="nav-label">概览</span></button>
+        <button class="nav-item" data-view="analysis" data-tooltip="用量分析"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 19V9M10 19V5M16 19v-7M22 19V3"/></svg></span><span class="nav-label">用量分析</span></button>
+        <button class="nav-item" data-view="devices" data-tooltip="设备"><span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span><span class="nav-label">设备</span></button>
+        <button class="nav-item" data-view="data" data-tooltip="数据明细"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 5c0 1.1 3.6 2 8 2s8-.9 8-2-3.6-2-8-2-8 .9-8 2zM4 5v6c0 1.1 3.6 2 8 2s8-.9 8-2V5M4 11v6c0 1.1 3.6 2 8 2s8-.9 8-2v-6"/></svg></span><span class="nav-label">数据明细</span></button>
       </nav>
-
       <div class="sidebar-spacer"></div>
-      <div class="sidebar-card">
-        <span class="sidebar-card-icon">●</span>
-        <div class="sidebar-card-copy">
-          <strong>公开聚合模式</strong>
-          <span>仅展示统计数字，不上传会话内容</span>
-        </div>
-      </div>
+      <div class="sidebar-card"><span class="sidebar-card-icon">●</span><div class="sidebar-card-copy"><strong>公开聚合模式</strong><span>仅展示统计数字，不上传会话内容</span></div></div>
       <div class="sidebar-foot">
-        <a href="https://github.com/Atingaii/token-monitor" target="_blank" rel="noreferrer" class="sidebar-link" data-tooltip="GitHub">
-          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3 5.4 5.4 0 0 0 19.2-.8S18  -1.2 15 1a13.4 13.4 0 0 0-6 0C6-1.2 4.8-.8 4.8-.8A5.4 5.4 0 0 0 4.7 3a5.8 5.8 0 0 0-1.5 4.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 9 18v4"/></svg></span>
-          <span class="nav-label">GitHub</span>
-        </a>
-        <button id="themeToggle" class="sidebar-link" type="button" data-tooltip="切换主题">
-          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></span>
-          <span class="nav-label">切换主题</span>
-        </button>
+        <a href="https://github.com/Atingaii/token-monitor" target="_blank" rel="noreferrer" class="sidebar-link" data-tooltip="GitHub"><span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 19c-4 1.2-4-2-5-2.5M15 21v-3.5c0-1 .1-1.5-.5-2 2.8-.3 5.5-1.4 5.5-6A4.7 4.7 0 0 0 18.8 6 4.4 4.4 0 0 0 18.7 3S17.7 2.6 15 4a11.4 11.4 0 0 0-6 0C6.3 2.6 5.3 3 5.3 3A4.4 4.4 0 0 0 5.2 6 4.7 4.7 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.5-.6 1-.5 2V21"/></svg></span><span class="nav-label">GitHub</span></a>
+        <button id="themeToggle" class="sidebar-link" type="button" data-tooltip="切换主题"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></span><span class="nav-label">切换主题</span></button>
       </div>
     </aside>
-
     <main class="main">
       <header class="topbar">
-        <div class="topbar-left">
-          <button id="mobileNavToggle" class="icon-button mobile-nav-toggle" type="button" aria-label="打开导航">
-            <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-          </button>
-          <div>
-            <div class="breadcrumb"><span>数据看板</span><i>/</i><strong id="viewTitle">概览</strong></div>
-            <p id="subtitle">跨设备 AI Coding Token、路由来源与 API 等价费用</p>
-          </div>
-        </div>
-        <div class="top-actions">
-          <div id="syncState" class="sync-pill"><span class="status-dot"></span><span>正在载入</span></div>
-          <span id="updatedAt" class="updated-at">—</span>
-          <button id="refreshButton" class="button" type="button">
-            <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0 2 5M20 4v7h-7"/></svg>
-            <span>刷新</span>
-          </button>
-        </div>
+        <div class="topbar-left"><button id="mobileNavToggle" class="icon-button mobile-nav-toggle" type="button" aria-label="打开导航"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><div><div class="breadcrumb"><span>数据看板</span><i>/</i><strong id="viewTitle">概览</strong></div><p id="subtitle">跨设备 AI Coding Token、路由来源与计划/API 等价费用</p></div></div>
+        <div class="top-actions"><div id="syncState" class="sync-pill"><span class="status-dot"></span><span>正在载入</span></div><span id="updatedAt" class="updated-at">—</span><button id="refreshButton" class="button" type="button"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0 2 5M20 4v7h-7"/></svg><span>刷新</span></button></div>
       </header>
-
       <div class="content-shell">
-        <section id="emptyState" class="state-card hidden">
-          <div class="state-icon"><svg viewBox="0 0 24 24"><path d="M4 5c0 1.1 3.6 2 8 2s8-.9 8-2-3.6-2-8-2-8 .9-8 2zM4 5v6c0 1.1 3.6 2 8 2s8-.9 8-2V5M4 11v6c0 1.1 3.6 2 8 2s8-.9 8-2v-6"/></svg></div>
-          <h2 id="emptyTitle">正在载入统计数据</h2>
-          <p id="emptyText">Token Monitor 正在读取设备聚合快照。</p>
-          <button id="emptyRefresh" class="button primary" type="button">重新载入</button>
-        </section>
-
+        <section id="emptyState" class="state-card hidden"><div class="state-icon"><svg viewBox="0 0 24 24"><path d="M4 5c0 1.1 3.6 2 8 2s8-.9 8-2-3.6-2-8-2-8 .9-8 2zM4 5v6c0 1.1 3.6 2 8 2s8-.9 8-2V5M4 11v6c0 1.1 3.6 2 8 2s8-.9 8-2v-6"/></svg></div><h2 id="emptyTitle">正在载入统计数据</h2><p id="emptyText">Token Monitor 正在读取设备聚合快照。</p><button id="emptyRefresh" class="button primary" type="button">重新载入</button></section>
         <div id="appContent" class="hidden">
           <section class="filter-card">
-            <div class="filter-topline">
-              <div class="segmented" id="rangeButtons" aria-label="时间范围">
-                <button data-range="today">今日</button>
-                <button data-range="7d">7 天</button>
-                <button data-range="30d" class="active">30 天</button>
-                <button data-range="month">本月</button>
-                <button data-range="all">全部</button>
-                <button data-range="custom">自定义</button>
-              </div>
-              <div id="customRange" class="date-range hidden">
-                <input id="startDate" type="date"><span>至</span><input id="endDate" type="date">
-              </div>
-              <div class="filter-repo"><span>数据源</span><strong id="repoLabel">—</strong></div>
-            </div>
-            <div class="filter-grid primary-filters">
-              <label><span>设备</span><select id="deviceFilter"><option value="*">全部设备</option></select></label>
-              <label><span>工具</span><select id="clientFilter"><option value="*">全部工具</option></select></label>
-              <label><span>模型</span><select id="modelFilter"><option value="*">全部模型</option></select></label>
-              <label><span>路由提供商</span><select id="routeProviderFilter"><option value="*">全部路由</option></select></label>
-            </div>
-            <details class="advanced-filters">
-              <summary>更多筛选</summary>
-              <div class="filter-grid">
-                <label><span>模型厂商</span><select id="upstreamFilter"><option value="*">全部厂商</option></select></label>
-                <label><span>路由类型</span><select id="routeTypeFilter"><option value="*">全部类型</option></select></label>
-                <label><span>原始 Provider</span><select id="providerFilter"><option value="*">全部 Provider</option></select></label>
-                <label id="tierFilterLabel"><span>Tier</span><select id="tierFilter"><option value="*">全部 Tier</option></select></label>
-              </div>
-            </details>
+            <div class="filter-topline"><div class="segmented" id="rangeButtons" aria-label="时间范围"><button data-range="today">今日</button><button data-range="7d">7 天</button><button data-range="30d" class="active">30 天</button><button data-range="month">本月</button><button data-range="all">全部</button><button data-range="custom">自定义</button></div><div id="customRange" class="date-range hidden"><input id="startDate" type="date"><span>至</span><input id="endDate" type="date"></div><div class="filter-repo"><span>数据源</span><strong id="repoLabel">—</strong></div></div>
+            <div class="filter-grid primary-filters"><label><span>设备</span><select id="deviceFilter"><option value="*">全部设备</option></select></label><label><span>工具</span><select id="clientFilter"><option value="*">全部工具</option></select></label><label><span>模型</span><select id="modelFilter"><option value="*">全部模型</option></select></label><label><span>路由提供商</span><select id="routeProviderFilter"><option value="*">全部路由</option></select></label></div>
+            <details class="advanced-filters"><summary>更多筛选</summary><div class="filter-grid"><label><span>模型厂商</span><select id="upstreamFilter"><option value="*">全部厂商</option></select></label><label><span>路由类型</span><select id="routeTypeFilter"><option value="*">全部类型</option></select></label><label><span>原始 Provider</span><select id="providerFilter"><option value="*">全部 Provider</option></select></label><label id="tierFilterLabel"><span>Tier</span><select id="tierFilter"><option value="*">全部 Tier</option></select></label></div></details>
           </section>
-
           <section class="kpi-grid">
-            <article class="kpi-card">
-              <div class="kpi-icon blue"><svg viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 11-13h-8z"/></svg></div>
-              <div><span>总 Tokens</span><strong id="mTotal">—</strong><small>当前筛选范围</small></div>
-            </article>
-            <article class="kpi-card">
-              <div class="kpi-icon green"><svg viewBox="0 0 24 24"><path d="M12 2v20M17 6.5c0-1.7-2.2-3-5-3s-5 1.3-5 3 2.2 3 5 3 5 1.3 5 3-2.2 3-5 3-5-1.3-5-3"/></svg></div>
-              <div><span>API 等价费用</span><strong id="mCost">—</strong><small id="mCostNote">非订阅账单</small></div>
-            </article>
-            <article class="kpi-card">
-              <div class="kpi-icon violet"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></div>
-              <div><span>输入 Tokens</span><strong id="mInput">—</strong><small>净输入</small></div>
-            </article>
-            <article class="kpi-card">
-              <div class="kpi-icon cyan"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></div>
-              <div><span>缓存读取</span><strong id="mCache">—</strong><small>Cache read</small></div>
-            </article>
-            <article class="kpi-card">
-              <div class="kpi-icon amber"><svg viewBox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"/></svg></div>
-              <div><span>输出 Tokens</span><strong id="mOutput">—</strong><small>含 Reasoning 分拆</small></div>
-            </article>
-            <article class="kpi-card">
-              <div class="kpi-icon rose"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg></div>
-              <div><span>请求消息</span><strong id="mMessages">—</strong><small>解析后的消息计数</small></div>
-            </article>
+            <article class="kpi-card"><div class="kpi-icon blue"><svg viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 11-13h-8z"/></svg></div><div><span>总 Tokens</span><strong id="mTotal">—</strong><small>当前筛选范围</small></div></article>
+            <article class="kpi-card"><div class="kpi-icon green"><svg viewBox="0 0 24 24"><path d="M12 2v20M17 6.5c0-1.7-2.2-3-5-3s-5 1.3-5 3 2.2 3 5 3 5 1.3 5 3-2.2 3-5 3-5-1.3-5-3"/></svg></div><div><span>等价费用</span><strong id="mCost">—</strong><small id="mCostNote">Codex 计划 / 其他 API</small></div></article>
+            <article class="kpi-card"><div class="kpi-icon violet"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></div><div><span>输入 Tokens</span><strong id="mInput">—</strong><small>净输入</small></div></article>
+            <article class="kpi-card"><div class="kpi-icon cyan"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></div><div><span>缓存读取</span><strong id="mCache">—</strong><small>Cache read</small></div></article>
+            <article class="kpi-card"><div class="kpi-icon amber"><svg viewBox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"/></svg></div><div><span>输出 Tokens</span><strong id="mOutput">—</strong><small>Reasoning 单独分拆</small></div></article>
+            <article class="kpi-card"><div class="kpi-icon rose"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg></div><div><span>请求消息</span><strong id="mMessages">—</strong><small>解析后的消息计数</small></div></article>
           </section>
-
-          <section id="overviewView" class="view-stack">
-            <article class="panel trend-panel">
-              <div class="panel-head">
-                <div><h2>用量趋势</h2><p>按时间观察 Token 与费用变化</p></div>
-                <select id="overviewMetric" class="compact-select"></select>
-              </div>
-              <div id="overviewTrend" class="chart large-chart"></div>
-            </article>
-
-            <div class="rank-grid">
-              <article class="panel rank-panel"><div class="panel-head"><div><h2>设备分布</h2><p>各设备贡献用量</p></div><button class="text-button jump-analysis" data-group="device">详细分析</button></div><div id="deviceBars" class="rank-list"></div></article>
-              <article class="panel rank-panel"><div class="panel-head"><div><h2>路由提供商</h2><p>按实际路由来源汇总</p></div><button class="text-button jump-analysis" data-group="routeProvider">详细分析</button></div><div id="routeBars" class="rank-list"></div></article>
-              <article class="panel rank-panel"><div class="panel-head"><div><h2>模型分布</h2><p>模型用量排名</p></div><button class="text-button jump-analysis" data-group="model">详细分析</button></div><div id="modelBars" class="rank-list"></div></article>
-              <article class="panel rank-panel"><div class="panel-head"><div><h2>客户端工具</h2><p>Codex、Claude Code 等</p></div><button class="text-button jump-analysis" data-group="client">详细分析</button></div><div id="clientBars" class="rank-list"></div></article>
-            </div>
-          </section>
-
-          <section id="analysisView" class="panel hidden">
-            <div class="panel-head analysis-head"><div><h2>详细分析</h2><p>自由切换指标、维度与图表形式</p></div></div>
-            <div class="analysis-toolbar">
-              <label><span>指标</span><select id="metricSelect"></select></label>
-              <label><span>分组</span><select id="groupSelect">
-                <option value="date">时间</option><option value="device">设备</option><option value="client">工具</option>
-                <option value="model">模型</option><option value="upstreamVendor">模型厂商</option><option value="routeProvider">路由提供商</option>
-                <option value="routeType">路由类型</option><option value="provider">原始 Provider</option><option value="tier">Tier</option>
-              </select></label>
-              <label><span>图表</span><select id="chartSelect">
-                <option value="line">折线图</option><option value="area">面积图</option><option value="bar">柱状图</option>
-                <option value="stacked">堆叠柱</option><option value="donut">环形图</option><option value="treemap">树图</option><option value="table">表格</option>
-              </select></label>
-              <label id="stackLabel"><span>堆叠</span><select id="stackSelect">
-                <option value="device">设备</option><option value="client">工具</option><option value="model">模型</option>
-                <option value="upstreamVendor">模型厂商</option><option value="routeProvider">路由提供商</option><option value="routeType">路由类型</option>
-                <option value="provider">原始 Provider</option><option value="tier">Tier</option>
-              </select></label>
-            </div>
-            <div id="analysisChart" class="chart analysis-chart"></div>
-            <div id="analysisTable" class="data-table-wrap hidden"></div>
-          </section>
-
-          <section id="devicesView" class="panel hidden">
-            <div class="panel-head"><div><h2>设备</h2><p>同步状态、平台与累计用量</p></div></div>
-            <div id="deviceTable" class="data-table-wrap"></div>
-          </section>
-
-          <section id="dataView" class="panel hidden">
-            <div class="panel-head">
-              <div><h2>聚合数据</h2><p>公开内容仅含统计数字和路由标签，不含 Prompt、回复、源码或完整 Session</p></div>
-              <button id="exportCsv" class="button" type="button"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg><span>导出 CSV</span></button>
-            </div>
-            <div id="rawTable" class="data-table-wrap"></div>
-          </section>
+          <section id="overviewView" class="view-stack"><article class="panel trend-panel"><div class="panel-head"><div><h2>用量趋势</h2><p>按时间观察 Token 与费用变化</p></div><select id="overviewMetric" class="compact-select"></select></div><div id="overviewTrend" class="chart large-chart"></div></article><div class="rank-grid"><article class="panel rank-panel"><div class="panel-head"><div><h2>设备分布</h2><p>各设备贡献用量</p></div><button class="text-button jump-analysis" data-group="device">详细分析</button></div><div id="deviceBars" class="rank-list"></div></article><article class="panel rank-panel"><div class="panel-head"><div><h2>路由提供商</h2><p>按实际路由来源汇总</p></div><button class="text-button jump-analysis" data-group="routeProvider">详细分析</button></div><div id="routeBars" class="rank-list"></div></article><article class="panel rank-panel"><div class="panel-head"><div><h2>模型分布</h2><p>模型用量排名</p></div><button class="text-button jump-analysis" data-group="model">详细分析</button></div><div id="modelBars" class="rank-list"></div></article><article class="panel rank-panel"><div class="panel-head"><div><h2>客户端工具</h2><p>Codex、Claude Code 等</p></div><button class="text-button jump-analysis" data-group="client">详细分析</button></div><div id="clientBars" class="rank-list"></div></article></div></section>
+          <section id="analysisView" class="panel hidden"><div class="panel-head analysis-head"><div><h2>详细分析</h2><p>自由切换指标、维度与图表形式</p></div></div><div class="analysis-toolbar"><label><span>指标</span><select id="metricSelect"></select></label><label><span>分组</span><select id="groupSelect"><option value="date">时间</option><option value="device">设备</option><option value="client">工具</option><option value="model">模型</option><option value="upstreamVendor">模型厂商</option><option value="routeProvider">路由提供商</option><option value="routeType">路由类型</option><option value="provider">原始 Provider</option><option value="tier">Tier</option></select></label><label><span>图表</span><select id="chartSelect"><option value="line">折线图</option><option value="area">面积图</option><option value="bar">柱状图</option><option value="stacked">堆叠柱</option><option value="donut">环形图</option><option value="treemap">树图</option><option value="table">表格</option></select></label><label id="stackLabel"><span>堆叠</span><select id="stackSelect"><option value="device">设备</option><option value="client">工具</option><option value="model">模型</option><option value="upstreamVendor">模型厂商</option><option value="routeProvider">路由提供商</option><option value="routeType">路由类型</option><option value="provider">原始 Provider</option><option value="tier">Tier</option></select></label></div><div id="analysisChart" class="chart analysis-chart"></div><div id="analysisTable" class="data-table-wrap hidden"></div></section>
+          <section id="devicesView" class="panel hidden"><div class="panel-head"><div><h2>设备</h2><p>同步状态、平台与累计用量</p></div></div><div id="deviceTable" class="data-table-wrap"></div></section>
+          <section id="dataView" class="panel hidden"><div class="panel-head"><div><h2>聚合数据</h2><p>公开内容仅含统计数字和路由标签，不含 Prompt、回复、源码、项目路径或完整 Session</p></div><button id="exportCsv" class="button" type="button"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg><span>导出 CSV</span></button></div><div id="rawTable" class="data-table-wrap"></div></section>
         </div>
       </div>
     </main>
