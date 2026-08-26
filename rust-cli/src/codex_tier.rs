@@ -2,11 +2,12 @@
 //!
 //! Canonical Codex token accounting remains Tokscale v4.14.0. This module is a
 //! deliberately narrow parser adapted from the MIT-licensed request/tier logic
-//! in `falyx6851-byte/codex-monitor` (2026). It contributes only request-level
-//! tier attribution and normalized token buckets. Pricing is centralized in
-//! `pricing.rs`, where the mature CC Switch-compatible rate policy is applied.
+//! in `falyx6851-byte/codex-monitor` (2026). It contributes request-level tier
+//! attribution and normalized token buckets only. Pricing is centralized in
+//! `pricing.rs` and therefore happens before daily aggregation, which is required
+//! for correct per-request long-context thresholds.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -80,6 +81,7 @@ pub struct DayReconciliation {
 
 #[derive(Debug, Clone, Default)]
 pub struct EnhancementResult {
+    /// Request-granular rows. Collector prices each row before its final grouping.
     pub rows: Vec<EnhancedCodexRow>,
     pub by_date: HashMap<String, DayReconciliation>,
 }
@@ -299,7 +301,8 @@ pub fn collect(since: Option<&str>, scanner_settings: &ScannerSettings) -> Resul
     let incremental = since.is_some();
     let bucket_timezone = BucketTimezone::from_scanner_settings(scanner_settings);
     let mut seen = HashSet::new();
-    let mut requests = Vec::new();
+    let mut rows = Vec::new();
+    let mut by_date: HashMap<String, DayReconciliation> = HashMap::new();
 
     for root in codex_roots() {
         if !root.exists() {
@@ -319,64 +322,27 @@ pub fn collect(since: Option<&str>, scanner_settings: &ScannerSettings) -> Resul
             {
                 continue;
             }
-            for record in parse_session_file(path, &bucket_timezone) {
-                if since.is_some_and(|start| record.date.as_str() < start) {
+            for request in parse_session_file(path, &bucket_timezone) {
+                if since.is_some_and(|start| request.date.as_str() < start)
+                    || !seen.insert(request.dedupe.clone())
+                {
                     continue;
                 }
-                if seen.insert(record.dedupe.clone()) {
-                    requests.push(record);
-                }
+                let metrics = request.usage.normalized_metrics();
+                let day = by_date.entry(request.date.clone()).or_default();
+                day.tokens = day.tokens.saturating_add(metrics.total_tokens());
+                day.messages = day.messages.saturating_add(metrics.messages);
+                rows.push(EnhancedCodexRow {
+                    date: request.date,
+                    model: request.model,
+                    provider: request.provider,
+                    tier: request.tier,
+                    metrics,
+                    cache_write_known: request.usage.cache_write.is_some(),
+                });
             }
         }
     }
-
-    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-    struct Key(String, String, String, String);
-    #[derive(Default)]
-    struct Acc {
-        metrics: Metrics,
-        cache_write_known: bool,
-        initialized: bool,
-    }
-
-    let mut grouped: BTreeMap<Key, Acc> = BTreeMap::new();
-    let mut by_date: HashMap<String, DayReconciliation> = HashMap::new();
-
-    for request in requests {
-        let metrics = request.usage.normalized_metrics();
-        let day = by_date.entry(request.date.clone()).or_default();
-        day.tokens = day.tokens.saturating_add(metrics.total_tokens());
-        day.messages = day.messages.saturating_add(metrics.messages);
-
-        let entry = grouped
-            .entry(Key(
-                request.date,
-                request.model,
-                request.provider,
-                request.tier,
-            ))
-            .or_default();
-        entry.metrics.add(&metrics);
-        let known = request.usage.cache_write.is_some();
-        entry.cache_write_known = if entry.initialized {
-            entry.cache_write_known && known
-        } else {
-            known
-        };
-        entry.initialized = true;
-    }
-
-    let rows = grouped
-        .into_iter()
-        .map(|(Key(date, model, provider, tier), acc)| EnhancedCodexRow {
-            date,
-            model,
-            provider,
-            tier,
-            metrics: acc.metrics,
-            cache_write_known: acc.cache_write_known,
-        })
-        .collect();
 
     Ok(EnhancementResult { rows, by_date })
 }
