@@ -1,0 +1,315 @@
+name: v1.1 Finalize
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v1.1-finalize.yml'
+      - '.release/v1.1.0'
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  RELEASE_TAG: v1.1.0
+
+jobs:
+  web-gate:
+    name: Web / final gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: JavaScript syntax
+        run: |
+          node --check web/analytics.js
+          node --check web/app.js
+      - name: Analytics regression
+        run: node web/analytics.test.cjs
+      - name: Privacy regression
+        run: |
+          ! grep -R -i -E 'auth\.json|prompt[^a-z]|assistant response|api[_ -]?key' web/*.js || (echo 'Dashboard code must not depend on private session payloads' && exit 1)
+
+  rust-quality:
+    name: Rust / clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  tokscale-regression:
+    name: Tokscale v4.14.0 / parser regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: junhoyeo/tokscale
+          ref: v4.14.0
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p tokscale-core --all-targets
+
+  build:
+    name: Build / ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: token-monitor-linux-x86_64
+            binary: token-monitor
+          - label: linux-arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            asset: token-monitor-linux-aarch64
+            binary: token-monitor
+          - label: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            asset: token-monitor-macos-aarch64
+            binary: token-monitor
+          - label: macos-x64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            asset: token-monitor-macos-x86_64
+            binary: token-monitor
+          - label: windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: token-monitor-windows-x86_64
+            binary: token-monitor.exe
+          - label: windows-arm64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            asset: token-monitor-windows-aarch64
+            binary: token-monitor.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Configure musl
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          if [ '${{ matrix.target }}' = 'x86_64-unknown-linux-musl' ]; then
+            echo 'CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc' >> "$GITHUB_ENV"
+            echo 'CC_x86_64_unknown_linux_musl=musl-gcc' >> "$GITHUB_ENV"
+          else
+            echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc' >> "$GITHUB_ENV"
+            echo 'CC_aarch64_unknown_linux_musl=musl-gcc' >> "$GITHUB_ENV"
+          fi
+      - name: Platform evidence
+        run: rustc -vV
+      - name: Installer syntax (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: sh -n install.sh
+      - name: Installer syntax (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path './install.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+      - name: Installer syntax (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path './install.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+      - name: Unit tests
+        run: cargo test --workspace --all-targets --target ${{ matrix.target }}
+      - name: Release build
+        run: cargo build --release --workspace --target ${{ matrix.target }}
+      - name: Verify Linux static artifact
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          binary='target/${{ matrix.target }}/release/token-monitor'
+          file "$binary"
+          ! readelf -l "$binary" | grep -q 'Requesting program interpreter'
+          ! strings "$binary" | grep -q 'GLIBC_[0-9]'
+          "$binary" --version | grep '1.1.0'
+          "$binary" clients >/dev/null
+      - name: Native CLI smoke (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          binary='target/${{ matrix.target }}/release/token-monitor'
+          "$binary" --version | grep '1.1.0'
+          "$binary" clients >/dev/null
+      - name: Native CLI smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $binary = 'target/${{ matrix.target }}/release/token-monitor.exe'
+          $version = & $binary --version
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '1\.1\.0') { throw "Unexpected version: $version" }
+          & $binary clients | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'clients smoke failed' }
+      - name: Package Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p out/package
+          cp 'target/${{ matrix.target }}/release/${{ matrix.binary }}' out/package/token-monitor
+          chmod +x out/package/token-monitor
+          tar -C out/package -czf 'out/${{ matrix.asset }}.tar.gz' token-monitor
+          cd out
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum '${{ matrix.asset }}.tar.gz' > '${{ matrix.asset }}.sha256'
+          else
+            shasum -a 256 '${{ matrix.asset }}.tar.gz' > '${{ matrix.asset }}.sha256'
+          fi
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out/package | Out-Null
+          Copy-Item 'target/${{ matrix.target }}/release/token-monitor.exe' 'out/package/token-monitor.exe'
+          Compress-Archive -Force 'out/package/token-monitor.exe' 'out/${{ matrix.asset }}.zip'
+          $hash = (Get-FileHash 'out/${{ matrix.asset }}.zip' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  ${{ matrix.asset }}.zip" | Set-Content -NoNewline 'out/${{ matrix.asset }}.sha256'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: out/${{ matrix.asset }}.*
+          if-no-files-found: error
+
+  publish:
+    name: Publish / v1.1.0
+    needs: [web-gate, rust-quality, tokscale-regression, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' rust-cli/Cargo.toml | head -n 1)"
+          test "$version" = '1.1.0'
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* --target "$GITHUB_SHA" --generate-notes --title "$RELEASE_TAG"
+          fi
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')" = 'false'
+
+  verify-install:
+    name: Install / ${{ matrix.label }}
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x64
+            os: ubuntu-latest
+          - label: linux-arm64
+            os: ubuntu-24.04-arm
+          - label: macos-arm64
+            os: macos-latest
+          - label: macos-x64
+            os: macos-15-intel
+          - label: windows-x64
+            os: windows-latest
+          - label: windows-arm64
+            os: windows-11-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Published install (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          TOKEN_MONITOR_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/v1.1.0
+        run: |
+          export TOKEN_MONITOR_INSTALL_DIR="$RUNNER_TEMP/token-monitor-v11"
+          sh ./install.sh
+          "$TOKEN_MONITOR_INSTALL_DIR/token-monitor" --version | grep '1.1.0'
+          "$TOKEN_MONITOR_INSTALL_DIR/token-monitor" clients >/dev/null
+      - name: Published install (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TOKEN_MONITOR_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/v1.1.0
+        run: |
+          $env:TOKEN_MONITOR_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'token-monitor-v11-pwsh'
+          ./install.ps1
+          $binary = Join-Path $env:TOKEN_MONITOR_INSTALL_DIR 'token-monitor.exe'
+          $version = & $binary --version
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '1\.1\.0') { throw "Unexpected version: $version" }
+          & $binary clients | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'clients smoke failed' }
+      - name: Published install (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          TOKEN_MONITOR_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/v1.1.0
+        run: |
+          $env:TOKEN_MONITOR_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'token-monitor-v11-wps51'
+          ./install.ps1
+          $binary = Join-Path $env:TOKEN_MONITOR_INSTALL_DIR 'token-monitor.exe'
+          $version = & $binary --version
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '1\.1\.0') { throw "Unexpected version: $version" }
+          & $binary clients | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'clients smoke failed' }
+
+  deploy-dashboard:
+    name: Pages / deploy dashboard
+    needs: web-gate
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  final-gate:
+    name: v1.1 / FINAL PASS
+    if: always()
+    needs: [web-gate, rust-quality, tokscale-regression, build, publish, verify-install, deploy-dashboard]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every release gate
+        shell: bash
+        env:
+          WEB: ${{ needs.web-gate.result }}
+          RUST: ${{ needs.rust-quality.result }}
+          TOKSCALE: ${{ needs.tokscale-regression.result }}
+          BUILD: ${{ needs.build.result }}
+          PUBLISH: ${{ needs.publish.result }}
+          INSTALL: ${{ needs.verify-install.result }}
+          PAGES: ${{ needs.deploy-dashboard.result }}
+        run: |
+          printf 'web=%s rust=%s tokscale=%s build=%s publish=%s install=%s pages=%s\n' "$WEB" "$RUST" "$TOKSCALE" "$BUILD" "$PUBLISH" "$INSTALL" "$PAGES"
+          test "$WEB" = success
+          test "$RUST" = success
+          test "$TOKSCALE" = success
+          test "$BUILD" = success
+          test "$PUBLISH" = success
+          test "$INSTALL" = success
+          test "$PAGES" = success
