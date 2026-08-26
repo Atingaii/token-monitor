@@ -7,19 +7,22 @@
   const API = 'https://api.github.com';
   const RAW = 'https://raw.githubusercontent.com';
   const BRANCH_PREFIX = 'tm-ledger-';
+  const ACCESS_BRANCH = 'tm-dashboard';
+  const ACCESS_AAD_PREFIX = 'token-monitor-dashboard-access-v1:';
+  const LEDGER_AAD_PREFIX = 'token-monitor-ledger-v2:';
   const PALETTE = [
-    '#2563eb','#0f766e','#7c3aed','#b45309','#be123c','#0369a1',
-    '#4d7c0f','#9333ea','#475569','#c2410c','#0891b2','#6d28d9'
+    '#3b82f6', '#06b6d4', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899',
+    '#6366f1', '#14b8a6', '#f97316', '#64748b', '#0ea5e9', '#a855f7'
   ];
   const METRICS = {
     totalTokens: ['总 Tokens', compact],
-    costUsd: ['API 等价费用', money],
+    costUsd: ['订阅等价费用', money],
     input: ['输入 Tokens', compact],
     cacheRead: ['缓存读取', compact],
     cacheWrite: ['缓存写入', compact],
     output: ['输出 Tokens', compact],
     reasoning: ['Reasoning', compact],
-    messages: ['消息数', integer]
+    messages: ['请求记录', integer]
   };
   const DIMENSIONS = {
     date: '日期',
@@ -36,6 +39,7 @@
   const state = {
     repo: '',
     key: '',
+    accessEnvelope: null,
     ledgers: [],
     rows: [],
     view: 'overview',
@@ -59,26 +63,27 @@
 
   const $ = id => document.getElementById(id);
   const ids = [
-    'unlockPanel','keyInput','unlockButton','unlockError','appContent','syncState',
-    'updatedAt','refreshButton','viewTitle','themeToggle','rangeButtons','customRange',
-    'startDate','endDate','deviceFilter','clientFilter','modelFilter','upstreamFilter',
-    'routeProviderFilter','routeTypeFilter','providerFilter','tierFilter','tierFilterLabel',
-    'mTotal','mCost','mCostNote','mInput','mCache','mOutput','mMessages',
-    'overviewView','analysisView','devicesView','dataView','overviewMetric','overviewTrend',
-    'deviceBars','routeBars','modelBars','clientBars','metricSelect','groupSelect',
-    'chartSelect','stackSelect','stackLabel','analysisChart','analysisTable','deviceTable',
-    'rawTable','exportCsv'
+    'appShell','sidebar','sidebarToggle','mobileMenuToggle','mobileBackdrop','brandLink',
+    'unlockPanel','unlockForm','passwordInput','unlockButton','unlockError','accessHint',
+    'appContent','syncState','updatedAt','refreshButton','viewTitle','subtitle','repoBadge',
+    'pricingBadge','themeToggle','rangeButtons','customRange','startDate','endDate',
+    'deviceFilter','clientFilter','modelFilter','upstreamFilter','routeProviderFilter',
+    'routeTypeFilter','providerFilter','tierFilter','tierFilterLabel','mTotal','mCost',
+    'mCostNote','mInput','mCache','mOutput','mMessages','overviewView','analysisView',
+    'devicesView','dataView','overviewMetric','overviewTrend','deviceBars','routeBars',
+    'modelBars','clientBars','metricSelect','groupSelect','chartSelect','stackSelect',
+    'stackLabel','analysisChart','analysisTable','deviceTable','rawTable','exportCsv'
   ];
   const els = Object.fromEntries(ids.map(id => [id, $(id)]));
 
   function compact(value) {
-    const n = Number(value || 0);
-    const abs = Math.abs(n);
-    if (abs >= 1e12) return `${(n / 1e12).toFixed(abs >= 1e13 ? 1 : 2)}T`;
-    if (abs >= 1e9) return `${(n / 1e9).toFixed(abs >= 1e10 ? 1 : 2)}B`;
-    if (abs >= 1e6) return `${(n / 1e6).toFixed(abs >= 1e7 ? 1 : 2)}M`;
-    if (abs >= 1e3) return `${(n / 1e3).toFixed(abs >= 1e4 ? 1 : 2)}K`;
-    return Math.round(n).toLocaleString();
+    const number = Number(value || 0);
+    const abs = Math.abs(number);
+    if (abs >= 1e12) return `${(number / 1e12).toFixed(abs >= 1e13 ? 1 : 2)}T`;
+    if (abs >= 1e9) return `${(number / 1e9).toFixed(abs >= 1e10 ? 1 : 2)}B`;
+    if (abs >= 1e6) return `${(number / 1e6).toFixed(abs >= 1e7 ? 1 : 2)}M`;
+    if (abs >= 1e3) return `${(number / 1e3).toFixed(abs >= 1e4 ? 1 : 2)}K`;
+    return Math.round(number).toLocaleString();
   }
 
   function integer(value) {
@@ -97,9 +102,9 @@
   }
 
   function esc(value) {
-    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[ch]));
+    }[char]));
   }
 
   function deriveRepo() {
@@ -112,7 +117,7 @@
     return first ? `${owner}/${first}` : `${owner}/${owner}.github.io`;
   }
 
-  function fragmentKey() {
+  function legacyFragmentKey() {
     return new URLSearchParams(location.hash.replace(/^#/, '')).get('key') || '';
   }
 
@@ -122,18 +127,81 @@
     return Uint8Array.from(atob(text), char => char.charCodeAt(0));
   }
 
-  async function decryptEnvelope(envelope, encodedKey) {
+  function validateWorkspaceKey(value) {
+    try {
+      return base64UrlBytes(value).length === 32;
+    } catch {
+      return false;
+    }
+  }
+
+  async function unwrapAccessEnvelope(envelope, password) {
+    if (
+      envelope?.kind !== 'token-monitor-dashboard-access' ||
+      Number(envelope?.schemaVersion) !== 1 ||
+      envelope?.kdf !== 'PBKDF2-HMAC-SHA256' ||
+      envelope?.algorithm !== 'AES-256-GCM'
+    ) {
+      throw new Error('不支持的 Dashboard 访问配置');
+    }
+    const salt = base64UrlBytes(envelope.salt);
+    const nonce = base64UrlBytes(envelope.nonce);
+    if (salt.length !== 16 || nonce.length !== 12) throw new Error('Dashboard 访问配置损坏');
+
+    const material = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(password),
+      'PBKDF2',
+      false,
+      ['deriveKey']
+    );
+    const key = await crypto.subtle.deriveKey(
+      {
+        name: 'PBKDF2',
+        salt,
+        iterations: Number(envelope.iterations),
+        hash: 'SHA-256'
+      },
+      material,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['decrypt']
+    );
+    let plaintext;
+    try {
+      plaintext = await crypto.subtle.decrypt(
+        {
+          name: 'AES-GCM',
+          iv: nonce,
+          additionalData: new TextEncoder().encode(`${ACCESS_AAD_PREFIX}${state.repo.toLowerCase()}`)
+        },
+        key,
+        base64UrlBytes(envelope.ciphertext)
+      );
+    } catch {
+      throw new Error('Dashboard 密码不正确');
+    }
+    const workspaceKey = new TextDecoder().decode(plaintext);
+    if (!validateWorkspaceKey(workspaceKey)) throw new Error('Dashboard 访问配置中的工作区密钥无效');
+    return workspaceKey;
+  }
+
+  async function decryptLedger(envelope, encodedKey) {
     if (envelope?.kind !== 'token-monitor-encrypted-ledger' || Number(envelope?.schemaVersion) !== 2) {
       throw new Error('不支持的加密账本格式');
     }
     const rawKey = base64UrlBytes(encodedKey);
-    if (rawKey.length !== 32) throw new Error('Dashboard key 无效');
+    if (rawKey.length !== 32) throw new Error('Workspace key 无效');
     const key = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['decrypt']);
-    const plaintext = await crypto.subtle.decrypt({
-      name: 'AES-GCM',
-      iv: base64UrlBytes(envelope.nonce),
-      additionalData: new TextEncoder().encode(`token-monitor-ledger-v2:${envelope.deviceHash}`)
-    }, key, base64UrlBytes(envelope.ciphertext));
+    const plaintext = await crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: base64UrlBytes(envelope.nonce),
+        additionalData: new TextEncoder().encode(`${LEDGER_AAD_PREFIX}${envelope.deviceHash}`)
+      },
+      key,
+      base64UrlBytes(envelope.ciphertext)
+    );
     return JSON.parse(new TextDecoder().decode(plaintext));
   }
 
@@ -146,27 +214,55 @@
     return response.json();
   }
 
+  async function fetchAccessEnvelope() {
+    const response = await fetch(`${RAW}/${state.repo}/${ACCESS_BRANCH}/access.json`, { cache: 'no-store' });
+    if (response.status === 404) {
+      const error = new Error('这个工作区还没有 Dashboard 密码配置');
+      error.code = 'ACCESS_NOT_FOUND';
+      throw error;
+    }
+    if (!response.ok) throw new Error(`读取 Dashboard 访问配置失败 (${response.status})`);
+    return response.json();
+  }
+
   async function branchLedger(branch) {
-    const rawUrl = `${RAW}/${state.repo}/${branch}/ledger.json`;
-    const response = await fetch(rawUrl, { cache: 'no-store' });
+    const response = await fetch(`${RAW}/${state.repo}/${branch}/ledger.json`, { cache: 'no-store' });
     if (!response.ok) throw new Error(`读取 ${branch} 失败 (${response.status})`);
-    return decryptEnvelope(await response.json(), state.key);
+    return decryptLedger(await response.json(), state.key);
   }
 
   function setSync(kind, text) {
     els.syncState.classList.toggle('ok', kind === 'ok');
-    els.syncState.querySelector('span:last-child').textContent = text;
+    els.syncState.classList.toggle('loading', kind === 'loading');
+    els.syncState.classList.toggle('error', kind === 'error');
+    const label = els.syncState.querySelector('.sync-label');
+    if (label) label.textContent = text;
+    els.syncState.title = text;
   }
 
   function showUnlock(error = '') {
     els.unlockPanel.classList.remove('hidden');
     els.appContent.classList.add('hidden');
     els.unlockError.textContent = error;
+    setSync(error ? 'error' : 'idle', error ? '等待解锁' : '未解锁');
   }
 
   function showApp() {
     els.unlockPanel.classList.add('hidden');
     els.appContent.classList.remove('hidden');
+  }
+
+  async function probeAccess() {
+    try {
+      state.accessEnvelope = await fetchAccessEnvelope();
+      els.accessHint.innerHTML = '使用首台设备设置的密码即可从任意浏览器访问；密码本身不会上传到 GitHub。';
+    } catch (error) {
+      if (error.code === 'ACCESS_NOT_FOUND') {
+        els.accessHint.innerHTML = '当前还是 v1.0 工作区。升级 CLI 后在已配置设备运行 <code>token-monitor password</code> 一次即可启用短密码访问。';
+      } else {
+        els.accessHint.textContent = error.message || String(error);
+      }
+    }
   }
 
   async function loadAll() {
@@ -175,11 +271,13 @@
 
     setSync('loading', '正在读取 GitHub');
     const refs = await apiJson(`/repos/${state.repo}/git/matching-refs/heads/${BRANCH_PREFIX}`);
-    const branches = refs
+    const branches = (Array.isArray(refs) ? refs : [])
       .map(ref => String(ref.ref || '').replace(/^refs\/heads\//, ''))
       .filter(branch => branch.startsWith(BRANCH_PREFIX));
     const settled = await Promise.allSettled(branches.map(branchLedger));
-    const ledgers = settled.filter(item => item.status === 'fulfilled').map(item => item.value);
+    const ledgers = settled
+      .filter(item => item.status === 'fulfilled')
+      .map(item => item.value);
     const failures = settled.filter(item => item.status === 'rejected');
     if (!ledgers.length && failures.length) throw failures[0].reason;
 
@@ -194,18 +292,33 @@
     })));
 
     populateFilters();
+    renderPricing();
     renderAll();
     const latest = ledgers.map(ledger => ledger.generatedAt).filter(Boolean).sort().at(-1);
-    els.updatedAt.textContent = latest
-      ? `数据 ${new Date(latest).toLocaleString()}`
-      : '暂无设备快照';
+    els.updatedAt.textContent = latest ? `数据 ${new Date(latest).toLocaleString()}` : '暂无设备快照';
     setSync(
-      'ok',
+      failures.length ? 'error' : 'ok',
       failures.length
         ? `${ledgers.length} 台已载入，${failures.length} 台失败`
-        : `${ledgers.length} 台设备`
+        : `${ledgers.length} 台设备已同步`
     );
     showApp();
+  }
+
+  function renderPricing() {
+    const latest = [...state.ledgers]
+      .filter(ledger => ledger.generatedAt)
+      .sort((left, right) => String(right.generatedAt).localeCompare(String(left.generatedAt)))[0];
+    const pricing = latest?.pricing;
+    if (pricing?.source) {
+      els.pricingBadge.textContent = pricing.source;
+      els.pricingBadge.title = [pricing.policy, pricing.compatibility, pricing.sourceUrl]
+        .filter(Boolean)
+        .join('\n');
+    } else {
+      els.pricingBadge.textContent = 'Legacy v1.0 价格口径';
+      els.pricingBadge.title = '升级并重新同步后会切换为 CC Switch 兼容的订阅等价价格。';
+    }
   }
 
   function unique(key, labelKey = key) {
@@ -218,54 +331,53 @@
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }
 
-  function fillSelect(select, entries, allLabel) {
-    const old = select.value || '*';
-    select.innerHTML = `<option value="*">${esc(allLabel)}</option>`
-      + entries.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join('');
-    select.value = [...select.options].some(option => option.value === old) ? old : '*';
+  function populateSelect(element, entries, allLabel, stateKey) {
+    const current = state[stateKey];
+    element.innerHTML = `<option value="*">${esc(allLabel)}</option>${entries
+      .map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`)
+      .join('')}`;
+    element.value = entries.some(([value]) => value === current) ? current : '*';
+    state[stateKey] = element.value;
   }
 
   function populateFilters() {
-    fillSelect(els.deviceFilter, unique('device', 'deviceName'), '全部设备');
-    fillSelect(els.clientFilter, unique('client'), '全部工具');
-    fillSelect(els.modelFilter, unique('model'), '全部模型');
-    fillSelect(els.upstreamFilter, unique('upstreamVendor'), '全部厂商');
-    fillSelect(els.routeProviderFilter, unique('routeProvider'), '全部路由');
-    fillSelect(els.routeTypeFilter, unique('routeType'), '全部类型');
-    fillSelect(els.providerFilter, unique('provider'), '全部 Provider');
+    populateSelect(els.deviceFilter, unique('device', 'deviceName'), '全部设备', 'device');
+    populateSelect(els.clientFilter, unique('client'), '全部工具', 'client');
+    populateSelect(els.modelFilter, unique('model'), '全部模型', 'model');
+    populateSelect(els.upstreamFilter, unique('upstreamVendor'), '全部厂商', 'upstreamVendor');
+    populateSelect(els.routeProviderFilter, unique('routeProvider'), '全部路由', 'routeProvider');
+    populateSelect(els.routeTypeFilter, unique('routeType'), '全部类型', 'routeType');
+    populateSelect(els.providerFilter, unique('provider'), '全部 Provider', 'provider');
     const tiers = unique('tier');
-    fillSelect(els.tierFilter, tiers, '全部 Tier');
-    els.tierFilterLabel.classList.toggle('hidden', !tiers.length);
+    populateSelect(els.tierFilter, tiers, '全部 Tier', 'tier');
+    els.tierFilterLabel.classList.toggle('hidden', tiers.length === 0);
   }
 
-  function iso(date) {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  function dateKey(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 
-  function bounds() {
+  function rangeBounds() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    let start = null;
-    let end = iso(today);
-    if (state.range === 'today') start = end;
-    else if (state.range === '7d') {
-      const date = new Date(today); date.setDate(date.getDate() - 6); start = iso(date);
-    } else if (state.range === '30d') {
-      const date = new Date(today); date.setDate(date.getDate() - 29); start = iso(date);
-    } else if (state.range === 'month') {
-      start = iso(new Date(today.getFullYear(), today.getMonth(), 1));
-    } else if (state.range === 'all') {
-      end = null;
-    } else if (state.range === 'custom') {
-      start = state.customStart || null;
-      end = state.customEnd || end;
+    if (state.range === 'all') return {};
+    if (state.range === 'custom') {
+      return { start: state.customStart || undefined, end: state.customEnd || undefined };
     }
-    return { start, end };
+    let start = new Date(today);
+    if (state.range === 'today') return { start: dateKey(today), end: dateKey(today) };
+    if (state.range === '7d') start.setDate(start.getDate() - 6);
+    else if (state.range === '30d') start.setDate(start.getDate() - 29);
+    else if (state.range === 'month') start = new Date(today.getFullYear(), today.getMonth(), 1);
+    return { start: dateKey(start), end: dateKey(today) };
   }
 
   function filtered() {
     return A.filterRows(state.rows, {
-      ...bounds(),
+      ...rangeBounds(),
       device: state.device,
       client: state.client,
       model: state.model,
@@ -280,98 +392,97 @@
   function renderSummary(rows) {
     const sum = A.sumRows(rows);
     els.mTotal.textContent = compact(sum.totalTokens);
-    els.mCost.textContent = money(sum.costUsd);
-    els.mCostNote.textContent = sum.costLowerBound ? '含下限估算' : '';
-    els.mCost.title = sum.costLowerBound
-      ? '部分 Codex 记录缺少 cache-write token，因此 API 等价费用是已知下限。'
-      : 'API 等价费用，不代表订阅实际账单。';
+    els.mCost.textContent = `${sum.costLowerBound ? '≥' : ''}${money(sum.costUsd)}`;
+    els.mCostNote.textContent = sum.costLowerBound ? '含无法完全确认的费用下限' : 'CC Switch 兼容订阅等价口径';
     els.mInput.textContent = compact(sum.input);
     els.mCache.textContent = compact(sum.cacheRead);
-    els.mOutput.textContent = compact(sum.output);
+    els.mOutput.textContent = compact(Number(sum.output || 0) + Number(sum.reasoning || 0));
     els.mMessages.textContent = integer(sum.messages);
   }
 
-  function renderRank(container, rows, dimension, metric = 'totalTokens', limit = 8) {
-    const items = A.groupRows(rows, dimension, metric).slice(0, limit);
-    const max = Math.max(1, ...items.map(item => item.value));
-    container.innerHTML = items.length
-      ? items.map(item => `
-        <div class="rank-row">
-          <span class="rank-name" title="${esc(item.key)}">${esc(item.key)}</span>
-          <span class="rank-track"><span class="rank-fill" style="width:${Math.max(1, item.value / max * 100)}%"></span></span>
-          <span class="rank-value">${esc(fmt(metric, item.value))}</span>
-        </div>`).join('')
-      : '<div class="empty">当前筛选无数据</div>';
+  function orderedItems(rows, dimension, metric) {
+    const items = A.groupRows(rows, dimension, metric);
+    return dimension === 'date' ? items.sort((a, b) => a.key.localeCompare(b.key)) : items;
   }
 
-  const NS = 'http://www.w3.org/2000/svg';
-  function node(tag, attrs = {}) {
-    const element = document.createElementNS(NS, tag);
-    Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, String(value)));
-    return element;
-  }
-
-  function tooltip() {
-    let element = document.querySelector('.tooltip');
-    if (!element) {
-      element = document.createElement('div');
-      element.className = 'tooltip hidden';
-      document.body.appendChild(element);
+  function renderRank(container, rows, dimension) {
+    const items = A.groupRows(rows, dimension, state.overviewMetric).slice(0, 6);
+    if (!items.length) {
+      container.innerHTML = '<div class="empty">当前筛选无数据</div>';
+      return;
     }
+    const max = Math.max(...items.map(item => item.value), 1);
+    container.innerHTML = items.map(item => `
+      <div class="rank-row" title="${esc(item.key)}">
+        <span class="rank-name">${esc(item.key)}</span>
+        <span class="rank-track"><span class="rank-fill" style="width:${Math.max(1.5, item.value / max * 100)}%"></span></span>
+        <span class="rank-value">${esc(fmt(state.overviewMetric, item.value))}</span>
+      </div>
+    `).join('');
+  }
+
+  function node(name, attrs = {}) {
+    const element = document.createElementNS('http://www.w3.org/2000/svg', name);
+    for (const [key, value] of Object.entries(attrs)) element.setAttribute(key, String(value));
     return element;
+  }
+
+  let tooltip;
+  function ensureTooltip() {
+    if (tooltip) return tooltip;
+    tooltip = document.createElement('div');
+    tooltip.className = 'chart-tooltip';
+    document.body.appendChild(tooltip);
+    return tooltip;
   }
 
   function attachTip(element, text) {
-    const tip = tooltip();
+    const tip = ensureTooltip();
     element.addEventListener('pointermove', event => {
       tip.textContent = text;
-      tip.style.left = `${event.clientX + 12}px`;
-      tip.style.top = `${event.clientY + 12}px`;
-      tip.classList.remove('hidden');
+      tip.style.left = `${Math.min(window.innerWidth - 280, event.clientX + 12)}px`;
+      tip.style.top = `${Math.max(8, event.clientY - 34)}px`;
+      tip.classList.add('visible');
     });
-    element.addEventListener('pointerleave', () => tip.classList.add('hidden'));
+    element.addEventListener('pointerleave', () => tip.classList.remove('visible'));
   }
 
   function frame(container) {
     container.innerHTML = '';
-    const width = Math.max(520, container.clientWidth - 36);
-    const height = Math.max(240, container.clientHeight - 36);
-    const root = node('svg', {
-      viewBox: `0 0 ${width} ${height}`,
-      preserveAspectRatio: 'none'
-    });
-    container.appendChild(root);
-    return { root, width, height, left: 54, right: 16, top: 14, bottom: 36 };
+    const width = Math.max(container.clientWidth || 700, 280);
+    const height = Math.max(container.clientHeight || 320, 220);
+    const margin = { top: 16, right: 14, bottom: 32, left: 54 };
+    const svg = node('svg', { viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: 'none' });
+    container.appendChild(svg);
+    return {
+      root: svg,
+      width,
+      height,
+      margin,
+      innerWidth: width - margin.left - margin.right,
+      innerHeight: height - margin.top - margin.bottom
+    };
   }
 
-  function axes(layout, labels, max) {
-    const innerWidth = layout.width - layout.left - layout.right;
-    const innerHeight = layout.height - layout.top - layout.bottom;
-    for (let index = 0; index <= 4; index++) {
-      const y = layout.top + innerHeight * index / 4;
+  function drawGrid(layout, maxValue, steps = 4) {
+    for (let index = 0; index <= steps; index += 1) {
+      const ratio = index / steps;
+      const y = layout.margin.top + layout.innerHeight * ratio;
       layout.root.appendChild(node('line', {
-        x1: layout.left, y1: y, x2: layout.width - layout.right, y2: y, class: 'grid-line'
+        x1: layout.margin.left,
+        y1: y,
+        x2: layout.width - layout.margin.right,
+        y2: y,
+        class: 'grid-line'
       }));
-      const text = node('text', {
-        x: layout.left - 8, y: y + 4, 'text-anchor': 'end', class: 'axis-label'
+      const label = node('text', {
+        x: layout.margin.left - 8,
+        y: y + 3,
+        'text-anchor': 'end'
       });
-      text.textContent = compact(max * (1 - index / 4));
-      layout.root.appendChild(text);
+      label.textContent = compact(maxValue * (1 - ratio));
+      layout.root.appendChild(label);
     }
-    const step = Math.max(1, Math.ceil(labels.length / 8));
-    labels.forEach((label, index) => {
-      if (index % step && index !== labels.length - 1) return;
-      const x = labels.length < 2
-        ? layout.left + innerWidth / 2
-        : layout.left + innerWidth * index / (labels.length - 1);
-      const text = node('text', {
-        x, y: layout.height - 10, 'text-anchor': 'middle', class: 'axis-label'
-      });
-      const value = String(label);
-      text.textContent = value.length > 14 ? `${value.slice(0, 12)}…` : value;
-      layout.root.appendChild(text);
-    });
-    return { innerWidth, innerHeight };
   }
 
   function lineChart(container, items, metric, area = false) {
@@ -379,142 +490,151 @@
       container.innerHTML = '<div class="empty">当前筛选无数据</div>';
       return;
     }
-    const data = [...items].sort((a, b) => a.key.localeCompare(b.key));
+    const data = items.slice(-90);
     const layout = frame(container);
-    const max = Math.max(1, ...data.map(item => item.value));
-    const { innerWidth, innerHeight } = axes(layout, data.map(item => item.key), max);
-    const points = data.map((item, index) => ({
-      x: data.length < 2
-        ? layout.left + innerWidth / 2
-        : layout.left + innerWidth * index / (data.length - 1),
-      y: layout.top + innerHeight * (1 - item.value / max),
-      item
-    }));
-    const path = points.map((point, index) => `${index ? 'L' : 'M'}${point.x},${point.y}`).join(' ');
+    const max = Math.max(...data.map(item => item.value), 1);
+    drawGrid(layout, max);
+    const x = index => layout.margin.left + (data.length === 1 ? layout.innerWidth / 2 : index / (data.length - 1) * layout.innerWidth);
+    const y = value => layout.margin.top + layout.innerHeight - value / max * layout.innerHeight;
+    const points = data.map((item, index) => [x(index), y(item.value)]);
+    const pathText = points.map(([px, py], index) => `${index ? 'L' : 'M'}${px},${py}`).join(' ');
+
     if (area) {
-      const baseline = layout.top + innerHeight;
+      const baseline = layout.margin.top + layout.innerHeight;
       layout.root.appendChild(node('path', {
-        d: `${path} L${points.at(-1).x},${baseline} L${points[0].x},${baseline} Z`,
-        class: 'chart-area'
+        d: `${pathText} L${points.at(-1)[0]},${baseline} L${points[0][0]},${baseline} Z`,
+        class: 'series-area'
       }));
     }
-    layout.root.appendChild(node('path', { d: path, class: 'chart-line' }));
-    points.forEach(point => {
-      const circle = node('circle', {
-        cx: point.x, cy: point.y, r: 3.5, fill: 'var(--accent)'
-      });
-      attachTip(circle, `${point.item.key} · ${fmt(metric, point.item.value)}`);
+    layout.root.appendChild(node('path', { d: pathText, class: 'series-line' }));
+
+    const labelEvery = Math.max(1, Math.ceil(data.length / 7));
+    data.forEach((item, index) => {
+      const circle = node('circle', { cx: x(index), cy: y(item.value), r: 3, class: 'series-dot' });
+      attachTip(circle, `${item.key} · ${fmt(metric, item.value)}`);
       layout.root.appendChild(circle);
+      if (index % labelEvery === 0 || index === data.length - 1) {
+        const label = node('text', {
+          x: x(index),
+          y: layout.height - 8,
+          'text-anchor': index === 0 ? 'start' : index === data.length - 1 ? 'end' : 'middle'
+        });
+        label.textContent = item.key.length > 12 ? `${item.key.slice(0, 10)}…` : item.key;
+        layout.root.appendChild(label);
+      }
     });
   }
 
   function barChart(container, items, metric) {
-    if (!items.length) {
+    const data = items.slice(0, 30);
+    if (!data.length) {
       container.innerHTML = '<div class="empty">当前筛选无数据</div>';
       return;
     }
-    const data = items.slice(0, 35).reverse();
     const layout = frame(container);
-    const innerWidth = layout.width - layout.left - layout.right;
-    const innerHeight = layout.height - layout.top - layout.bottom;
-    const max = Math.max(1, ...data.map(item => item.value));
-    const gap = 4;
-    const barHeight = Math.max(3, (innerHeight - gap * (data.length - 1)) / data.length);
+    const max = Math.max(...data.map(item => item.value), 1);
+    drawGrid(layout, max);
+    const slot = layout.innerWidth / data.length;
+    const width = Math.max(2, Math.min(42, slot * .68));
+    const labelEvery = Math.max(1, Math.ceil(data.length / 8));
     data.forEach((item, index) => {
-      const y = layout.top + index * (barHeight + gap);
-      const rect = node('rect', {
-        x: layout.left,
-        y,
-        width: Math.max(1, innerWidth * item.value / max),
-        height: barHeight,
-        rx: 2,
-        class: 'chart-bar'
-      });
+      const height = item.value / max * layout.innerHeight;
+      const x = layout.margin.left + index * slot + (slot - width) / 2;
+      const y = layout.margin.top + layout.innerHeight - height;
+      const rect = node('rect', { x, y, width, height: Math.max(height, 1), rx: 3, class: 'bar' });
       attachTip(rect, `${item.key} · ${fmt(metric, item.value)}`);
       layout.root.appendChild(rect);
-      if (data.length <= 16) {
-        const text = node('text', {
-          x: layout.left - 8,
-          y: y + barHeight / 2 + 4,
-          'text-anchor': 'end',
-          class: 'axis-label'
-        });
-        text.textContent = item.key.length > 12 ? `${item.key.slice(0, 10)}…` : item.key;
-        layout.root.appendChild(text);
+      if (index % labelEvery === 0 || index === data.length - 1) {
+        const label = node('text', { x: x + width / 2, y: layout.height - 8, 'text-anchor': 'middle' });
+        label.textContent = item.key.length > 10 ? `${item.key.slice(0, 8)}…` : item.key;
+        layout.root.appendChild(label);
       }
     });
   }
 
   function renderLegend(container, labels) {
     const legend = document.createElement('div');
-    legend.className = 'legend';
+    legend.className = 'chart-legend';
     legend.innerHTML = labels.slice(0, 12).map((label, index) => `
-      <span class="legend-item">
-        <i class="legend-dot" style="background:${PALETTE[index % PALETTE.length]}"></i>${esc(label)}
-      </span>`).join('');
+      <span class="legend-item"><i class="legend-dot" style="background:${PALETTE[index % PALETTE.length]}"></i>${esc(label)}</span>
+    `).join('');
     container.appendChild(legend);
   }
 
   function stackedChart(container, rows, primary, secondary, metric) {
-    if (primary === secondary) secondary = primary === 'device' ? 'client' : 'device';
     const matrix = A.groupMatrix(rows, primary, secondary, metric);
-    if (!matrix.xValues.length) {
+    const xValues = matrix.xValues.slice(-45);
+    if (!xValues.length || !matrix.stacks.length) {
       container.innerHTML = '<div class="empty">当前筛选无数据</div>';
       return;
     }
-    const xValues = matrix.xValues.slice(primary === 'date' ? -45 : 0);
-    const stacks = matrix.stacks.slice(0, 12);
-    const totals = xValues.map(x => stacks.reduce((sum, stack) => sum + matrix.value(x, stack), 0));
+    const stackTotals = matrix.stacks.map(stack => ({
+      stack,
+      total: xValues.reduce((sum, x) => sum + matrix.value(x, stack), 0)
+    })).sort((a, b) => b.total - a.total);
+    const stacks = stackTotals.slice(0, 10).map(item => item.stack);
     const layout = frame(container);
-    const max = Math.max(1, ...totals);
-    const { innerWidth, innerHeight } = axes(layout, xValues, max);
-    const slot = innerWidth / Math.max(1, xValues.length);
-    const barWidth = Math.max(2, slot * 0.72);
+    const totals = xValues.map(x => stacks.reduce((sum, stack) => sum + matrix.value(x, stack), 0));
+    const max = Math.max(...totals, 1);
+    drawGrid(layout, max);
+    const slot = layout.innerWidth / xValues.length;
+    const width = Math.max(2, Math.min(36, slot * .72));
+    const labelEvery = Math.max(1, Math.ceil(xValues.length / 8));
 
-    xValues.forEach((x, xIndex) => {
-      let cumulative = 0;
+    xValues.forEach((xValue, xIndex) => {
+      let offset = 0;
       stacks.forEach((stack, stackIndex) => {
-        const value = matrix.value(x, stack);
-        if (!value) return;
-        const height = innerHeight * value / max;
-        const y = layout.top + innerHeight - innerHeight * (cumulative + value) / max;
+        const value = matrix.value(xValue, stack);
+        if (value <= 0) return;
+        const height = value / max * layout.innerHeight;
+        const x = layout.margin.left + xIndex * slot + (slot - width) / 2;
+        const y = layout.margin.top + layout.innerHeight - offset - height;
         const rect = node('rect', {
-          x: layout.left + xIndex * slot + (slot - barWidth) / 2,
-          y,
-          width: barWidth,
-          height: Math.max(0.8, height),
+          x, y, width, height: Math.max(1, height),
           fill: PALETTE[stackIndex % PALETTE.length],
-          class: 'chart-segment'
+          class: 'stack-bar'
         });
-        attachTip(rect, `${x} · ${stack} · ${fmt(metric, value)}`);
+        attachTip(rect, `${xValue} · ${stack} · ${fmt(metric, value)}`);
         layout.root.appendChild(rect);
-        cumulative += value;
+        offset += height;
       });
+      if (xIndex % labelEvery === 0 || xIndex === xValues.length - 1) {
+        const label = node('text', {
+          x: layout.margin.left + xIndex * slot + slot / 2,
+          y: layout.height - 8,
+          'text-anchor': 'middle'
+        });
+        label.textContent = xValue.length > 10 ? `${xValue.slice(0, 8)}…` : xValue;
+        layout.root.appendChild(label);
+      }
     });
     renderLegend(container, stacks);
   }
 
   function donutChart(container, items, metric) {
-    const data = items.filter(item => item.value > 0).slice(0, 12);
-    const total = data.reduce((sum, item) => sum + item.value, 0);
-    if (!total) {
+    const positive = items.filter(item => item.value > 0);
+    if (!positive.length) {
       container.innerHTML = '<div class="empty">当前筛选无数据</div>';
       return;
     }
+    const head = positive.slice(0, 8);
+    const rest = positive.slice(8).reduce((sum, item) => sum + item.value, 0);
+    const data = rest > 0 ? [...head, { key: '其他', value: rest }] : head;
+    const total = data.reduce((sum, item) => sum + item.value, 0);
     const layout = frame(container);
     const cx = layout.width / 2;
-    const cy = layout.height / 2;
-    const radius = Math.min(layout.width, layout.height) * 0.31;
-    const strokeWidth = radius * 0.36;
-    const circumference = 2 * Math.PI * radius;
+    const cy = layout.margin.top + layout.innerHeight / 2;
+    const radius = Math.min(layout.innerWidth, layout.innerHeight) * .32;
+    const circumference = Math.PI * 2 * radius;
     let offset = 0;
+
     data.forEach((item, index) => {
-      const length = circumference * item.value / total;
+      const length = item.value / total * circumference;
       const circle = node('circle', {
         cx, cy, r: radius,
         fill: 'none',
         stroke: PALETTE[index % PALETTE.length],
-        'stroke-width': strokeWidth,
+        'stroke-width': Math.max(18, radius * .28),
         'stroke-dasharray': `${length} ${circumference - length}`,
         'stroke-dashoffset': -offset,
         transform: `rotate(-90 ${cx} ${cy})`
@@ -523,9 +643,7 @@
       layout.root.appendChild(circle);
       offset += length;
     });
-    const center = node('text', {
-      x: cx, y: cy + 6, 'text-anchor': 'middle', class: 'donut-center'
-    });
+    const center = node('text', { x: cx, y: cy + 5, 'text-anchor': 'middle', class: 'donut-center' });
     center.textContent = fmt(metric, total);
     layout.root.appendChild(center);
     renderLegend(container, data.map(item => item.key));
@@ -538,29 +656,28 @@
       return;
     }
     const layout = frame(container);
-    const rects = A.squarify(data, 5, 5, layout.width - 10, layout.height - 10);
+    const rects = A.squarify(data, 8, 8, layout.width - 16, layout.height - 16);
     rects.forEach((item, index) => {
       const rect = node('rect', {
         x: item.x,
         y: item.y,
         width: Math.max(0, item.width - 2),
         height: Math.max(0, item.height - 2),
-        rx: 3,
+        rx: 5,
         fill: PALETTE[index % PALETTE.length]
       });
       attachTip(rect, `${item.key} · ${fmt(metric, item.value)}`);
       layout.root.appendChild(rect);
-      if (item.width > 75 && item.height > 30) {
-        const text = node('text', {
-          x: item.x + 8, y: item.y + 18, class: 'treemap-label'
-        });
-        text.textContent = item.key.length > 18 ? `${item.key.slice(0, 16)}…` : item.key;
-        layout.root.appendChild(text);
+      if (item.width > 80 && item.height > 32) {
+        const label = node('text', { x: item.x + 8, y: item.y + 18, class: 'treemap-label' });
+        label.textContent = item.key.length > 18 ? `${item.key.slice(0, 16)}…` : item.key;
+        layout.root.appendChild(label);
       }
     });
   }
 
   function tableHtml(headers, rows) {
+    if (!rows.length) return '<div class="empty">当前筛选无数据</div>';
     return `<table class="data-table"><thead><tr>${headers.map(header =>
       `<th class="${header.number ? 'number' : ''}">${esc(header.label)}</th>`
     ).join('')}</tr></thead><tbody>${rows.map(row =>
@@ -571,7 +688,7 @@
   }
 
   function aggregateTable(rows, dimension, metric) {
-    const items = A.groupRows(rows, dimension, metric);
+    const items = orderedItems(rows, dimension, metric);
     els.analysisTable.innerHTML = tableHtml([
       { key: 'key', label: DIMENSIONS[dimension] || dimension },
       { key: 'value', label: METRICS[metric]?.[0] || metric, number: true, render: value => esc(fmt(metric, value)) }
@@ -582,7 +699,7 @@
     els.stackLabel.classList.toggle('hidden', state.chart !== 'stacked');
     els.analysisTable.classList.toggle('hidden', state.chart !== 'table');
     els.analysisChart.classList.toggle('hidden', state.chart === 'table');
-    const items = A.groupRows(rows, state.group, state.metric);
+    const items = orderedItems(rows, state.group, state.metric);
     els.analysisChart.title = state.metric === 'costUsd' && rows.some(row => row.costLowerBound)
       ? '当前筛选包含费用下限估算。'
       : '';
@@ -609,7 +726,8 @@
         lowerBound: sum.costLowerBound,
         messages: sum.messages,
         updatedAt: ledger.generatedAt || '',
-        scanMs: ledger.scanMs || 0
+        scanMs: ledger.scanMs || 0,
+        version: ledger.device?.appVersion || '—'
       };
     }).sort((a, b) => b.tokens - a.tokens);
 
@@ -617,11 +735,12 @@
       { key: 'name', label: '设备' },
       { key: 'platform', label: '平台' },
       { key: 'arch', label: '架构' },
+      { key: 'version', label: 'CLI' },
       { key: 'tokens', label: 'Tokens', number: true, render: value => esc(compact(value)) },
-      { key: 'cost', label: 'API 等价费用', number: true, render: (value, row) => esc(`${row.lowerBound ? '≥' : ''}${money(value)}`) },
-      { key: 'messages', label: '消息', number: true, render: value => esc(integer(value)) },
+      { key: 'cost', label: '订阅等价费用', number: true, render: (value, row) => esc(`${row.lowerBound ? '≥' : ''}${money(value)}`) },
+      { key: 'messages', label: '记录', number: true, render: value => esc(integer(value)) },
       { key: 'updatedAt', label: '数据时间', render: value => esc(value ? new Date(value).toLocaleString() : '—') },
-      { key: 'scanMs', label: '最近扫描', number: true, render: value => esc(`${integer(value)} ms`) }
+      { key: 'scanMs', label: '扫描耗时', number: true, render: value => esc(`${integer(value)} ms`) }
     ], entries);
   }
 
@@ -636,6 +755,7 @@
       { key: 'upstreamVendor', label: '模型厂商' },
       { key: 'routeProvider', label: '路由提供商' },
       { key: 'routeType', label: '路由类型' },
+      { key: 'provider', label: '原始 Provider' },
       { key: 'model', label: '模型' },
       { key: 'tier', label: 'Tier' },
       { key: 'input', label: 'Input', number: true, render: value => esc(compact(value)) },
@@ -643,7 +763,7 @@
       { key: 'cacheWrite', label: 'Cache W', number: true, render: value => esc(compact(value)) },
       { key: 'output', label: 'Output', number: true, render: value => esc(compact(value)) },
       { key: 'reasoning', label: 'Reasoning', number: true, render: value => esc(compact(value)) },
-      { key: 'messages', label: '消息', number: true, render: value => esc(integer(value)) },
+      { key: 'messages', label: '记录', number: true, render: value => esc(integer(value)) },
       { key: 'costUsd', label: '费用', number: true, render: (value, row) => esc(`${row.costLowerBound ? '≥' : ''}${money(value)}`) }
     ], data);
   }
@@ -652,7 +772,12 @@
     const rows = filtered();
     renderSummary(rows);
     if (state.view === 'overview') {
-      lineChart(els.overviewTrend, A.groupRows(rows, 'date', state.overviewMetric), state.overviewMetric, true);
+      lineChart(
+        els.overviewTrend,
+        orderedItems(rows, 'date', state.overviewMetric),
+        state.overviewMetric,
+        true
+      );
       renderRank(els.deviceBars, rows, 'device');
       renderRank(els.routeBars, rows, 'routeProvider');
       renderRank(els.modelBars, rows, 'model');
@@ -666,18 +791,23 @@
     }
   }
 
+  function closeMobileMenu() {
+    els.appShell.classList.remove('mobile-open');
+  }
+
   function selectView(view) {
     state.view = view;
-    document.querySelectorAll('.nav-item').forEach(button => {
+    document.querySelectorAll('.nav-item[data-view]').forEach(button => {
       button.classList.toggle('active', button.dataset.view === view);
     });
     ['overview','analysis','devices','data'].forEach(name => {
       els[`${name}View`].classList.toggle('hidden', name !== view);
     });
     els.viewTitle.textContent = ({
-      overview: '概览', analysis: '用量分析', devices: '设备', data: '数据'
+      overview: '概览', analysis: '用量分析', devices: '设备', data: '聚合数据'
     })[view] || 'Token Monitor';
-    renderAll();
+    closeMobileMenu();
+    requestAnimationFrame(renderAll);
   }
 
   function metricOptions(select, selected) {
@@ -687,12 +817,29 @@
     select.value = selected;
   }
 
+  function initTheme() {
+    const saved = localStorage.getItem('tm-theme');
+    const theme = saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.dataset.theme = theme;
+  }
+
+  function initSidebar() {
+    const collapsed = localStorage.getItem('tm-sidebar-collapsed') === '1';
+    els.appShell.classList.toggle('is-collapsed', collapsed);
+    els.sidebarToggle.title = collapsed ? '展开侧边栏' : '折叠侧边栏';
+    els.sidebarToggle.setAttribute('aria-label', els.sidebarToggle.title);
+  }
+
   function wire() {
     metricOptions(els.metricSelect, state.metric);
     metricOptions(els.overviewMetric, state.overviewMetric);
 
-    document.querySelectorAll('.nav-item').forEach(button => {
+    document.querySelectorAll('.nav-item[data-view]').forEach(button => {
       button.addEventListener('click', () => selectView(button.dataset.view));
+    });
+    els.brandLink.addEventListener('click', event => {
+      event.preventDefault();
+      selectView('overview');
     });
     document.querySelectorAll('.jump-analysis').forEach(button => {
       button.addEventListener('click', () => {
@@ -703,6 +850,17 @@
         selectView('analysis');
       });
     });
+
+    els.sidebarToggle.addEventListener('click', () => {
+      const collapsed = !els.appShell.classList.contains('is-collapsed');
+      els.appShell.classList.toggle('is-collapsed', collapsed);
+      localStorage.setItem('tm-sidebar-collapsed', collapsed ? '1' : '0');
+      els.sidebarToggle.title = collapsed ? '展开侧边栏' : '折叠侧边栏';
+      els.sidebarToggle.setAttribute('aria-label', els.sidebarToggle.title);
+      setTimeout(renderAll, 190);
+    });
+    els.mobileMenuToggle.addEventListener('click', () => els.appShell.classList.add('mobile-open'));
+    els.mobileBackdrop.addEventListener('click', closeMobileMenu);
 
     els.rangeButtons.addEventListener('click', event => {
       const button = event.target.closest('button[data-range]');
@@ -754,16 +912,37 @@
     });
 
     els.refreshButton.addEventListener('click', () => {
-      loadAll().catch(error => showUnlock(error.message || String(error)));
+      if (!state.key) return showUnlock();
+      loadAll().catch(error => {
+        showUnlock(error.message || String(error));
+        setSync('error', '读取失败');
+      });
     });
-    els.unlockButton.addEventListener('click', () => {
-      state.key = els.keyInput.value.trim();
-      if (!state.key) return;
-      history.replaceState(null, '', `${location.pathname}${location.search}#key=${encodeURIComponent(state.key)}`);
-      loadAll().catch(error => showUnlock(error.message || String(error)));
-    });
-    els.keyInput.addEventListener('keydown', event => {
-      if (event.key === 'Enter') els.unlockButton.click();
+
+    els.unlockForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const password = els.passwordInput.value;
+      if (!password || password.length < 8) {
+        els.unlockError.textContent = '请输入至少 8 个字符的 Dashboard 密码';
+        return;
+      }
+      els.unlockButton.disabled = true;
+      els.unlockButton.textContent = '正在解锁…';
+      els.unlockError.textContent = '';
+      try {
+        state.accessEnvelope = state.accessEnvelope || await fetchAccessEnvelope();
+        state.key = await unwrapAccessEnvelope(state.accessEnvelope, password);
+        await loadAll();
+        els.passwordInput.value = '';
+      } catch (error) {
+        showUnlock(error.message || String(error));
+        if (error.code === 'ACCESS_NOT_FOUND') {
+          els.accessHint.innerHTML = '升级 CLI 后在任意已配置设备运行 <code>token-monitor password</code> 一次，然后刷新本页。';
+        }
+      } finally {
+        els.unlockButton.disabled = false;
+        els.unlockButton.textContent = '进入 Dashboard';
+      }
     });
 
     els.exportCsv.addEventListener('click', () => {
@@ -787,27 +966,48 @@
     window.addEventListener('resize', () => {
       clearTimeout(window.__tmResize);
       window.__tmResize = setTimeout(renderAll, 120);
+      if (window.innerWidth > 820) closeMobileMenu();
     });
   }
 
   async function boot() {
     state.repo = deriveRepo();
-    state.key = fragmentKey();
-    const theme = localStorage.getItem('tm-theme');
-    if (theme) document.documentElement.dataset.theme = theme;
+    els.repoBadge.textContent = state.repo || '未指定仓库';
+    els.brandLink.href = `${location.pathname}?repo=${encodeURIComponent(state.repo)}`;
+    initTheme();
+    initSidebar();
     wire();
-    if (!state.key) {
-      showUnlock();
+
+    if (!state.repo) {
+      showUnlock('无法判断数据仓库，请使用 ?repo=OWNER/REPO');
       return;
     }
-    els.keyInput.value = state.key;
-    try {
-      await loadAll();
-    } catch (error) {
-      showUnlock(error.message || String(error));
-      setSync('error', '读取失败');
+
+    const legacy = legacyFragmentKey();
+    if (legacy) {
+      if (!validateWorkspaceKey(legacy)) {
+        showUnlock('旧版 Dashboard key 无效');
+        await probeAccess();
+        return;
+      }
+      state.key = legacy;
+      try {
+        await loadAll();
+        return;
+      } catch (error) {
+        state.key = '';
+        showUnlock(error.message || String(error));
+      }
+    } else {
+      showUnlock();
     }
+
+    await probeAccess();
+    setTimeout(() => els.passwordInput.focus(), 50);
   }
 
-  boot();
+  boot().catch(error => {
+    showUnlock(error.message || String(error));
+    setSync('error', '初始化失败');
+  });
 })();
