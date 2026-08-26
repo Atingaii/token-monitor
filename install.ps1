@@ -1,11 +1,10 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-$Repo = 'Atingaii/token-monitor'
-$Base = if ($env:TOKEN_MONITOR_RELEASE_BASE) { $env:TOKEN_MONITOR_RELEASE_BASE.TrimEnd('/') } else { "https://github.com/$Repo/releases/latest/download" }
+$Base = if ($env:TOKEN_MONITOR_RELEASE_BASE) { $env:TOKEN_MONITOR_RELEASE_BASE.TrimEnd('/') } else { 'https://token-monitor-v110-dist2-cuidongshan350-1312.vercel.app' }
 
 # Windows PowerShell 5.1 can otherwise negotiate an obsolete TLS protocol on
-# older machines/profiles when downloading from GitHub.
+# older machines/profiles when downloading from HTTPS endpoints.
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
   try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -104,6 +103,9 @@ try {
   Write-Host "`nInstalled: $Binary"
   Write-Host 'First device:'
   Write-Host '  token-monitor setup'
+  Write-Host 'Existing v1.0 device:'
+  Write-Host '  token-monitor password'
+  Write-Host '  token-monitor sync --full'
   Write-Host 'If this installer ran in a child PowerShell and PATH is not visible yet, use:'
   Write-Host "  & `"$Binary`" setup"
   Write-Host "Additional device: paste the 'token-monitor join ...' command printed by an existing device"
