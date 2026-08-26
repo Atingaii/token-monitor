@@ -8,6 +8,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::generate_key;
+use crate::model::CURRENT_LEDGER_SCHEMA_VERSION;
 
 pub const DASHBOARD_ORIGIN: &str = "https://atingaii.github.io/token-monitor/";
 
@@ -177,9 +178,18 @@ pub fn save(config: &Config) -> Result<()> {
 pub fn read_cached_ledger() -> Result<Option<crate::model::Ledger>> {
     let path = ledger_cache_path()?;
     match fs::read(&path) {
-        Ok(data) => Ok(Some(
-            serde_json::from_slice(&data).context("invalid local ledger cache")?,
-        )),
+        Ok(data) => {
+            let ledger: crate::model::Ledger =
+                serde_json::from_slice(&data).context("invalid local ledger cache")?;
+            // Pricing semantics are persisted inside each row. Reusing an older
+            // schema during an incremental scan would preserve stale historical
+            // prices. Treat older caches as absent so the first run after an
+            // accounting-schema migration performs one full rescan/reprice.
+            if ledger.schema_version < CURRENT_LEDGER_SCHEMA_VERSION {
+                return Ok(None);
+            }
+            Ok(Some(ledger))
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
     }
