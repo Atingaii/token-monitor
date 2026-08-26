@@ -1,10 +1,10 @@
 //! Codex service-tier enhancement.
 //!
-//! Canonical Codex accounting remains Tokscale v4.14.0. This module is a
+//! Canonical Codex token accounting remains Tokscale v4.14.0. This module is a
 //! deliberately narrow adapter derived from the MIT-licensed request parser and
-//! `estimateCost` logic in `falyx6851-byte/codex-monitor` (2026), translated to
-//! Rust and stripped of its HTTP/SQLite/UI concerns. Collector code accepts its
-//! output only after exact per-day reconciliation with Tokscale.
+//! cost logic in `falyx6851-byte/codex-monitor` (2026), translated to Rust and
+//! stripped of its HTTP/SQLite/UI concerns. Collector code accepts its rows only
+//! after exact per-day token/message reconciliation with Tokscale.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
@@ -36,10 +36,9 @@ struct RawUsage {
 
 impl RawUsage {
     fn normalized_metrics(&self) -> Metrics {
-        // This mirrors Tokscale v4.14.0's Codex normalization: cached input is a
-        // subset of input and reasoning is a subset of output. The optional
-        // cache-write bucket is then split out of uncached input without changing
-        // the additive total.
+        // Tokscale v4.14.0 semantics: cached input is a subset of input and
+        // reasoning is a subset of output. Cache-write, when explicitly present,
+        // is split out of uncached input without changing the additive total.
         let cached = self.cached.max(0).min(self.input.max(0));
         let uncached = self.input.max(0).saturating_sub(cached);
         let cache_write = self.cache_write.unwrap_or(0).max(0).min(uncached);
@@ -52,6 +51,7 @@ impl RawUsage {
             reasoning,
             messages: 1,
             cost_usd: 0.0,
+            plan_cost_usd: 0.0,
         }
     }
 
@@ -82,6 +82,8 @@ pub struct EnhancedCodexRow {
 pub struct DayReconciliation {
     pub tokens: i64,
     pub messages: i32,
+    /// Diagnostic only. Unpriced requests no longer invalidate an otherwise
+    /// exact tier reconstruction; they are surfaced as lower-bound cost rows.
     pub all_priced: bool,
 }
 
@@ -101,6 +103,12 @@ struct PricingConfig {
 
 #[derive(Debug, Deserialize)]
 struct ModelPricing {
+    api: BillingPricing,
+    plan: BillingPricing,
+}
+
+#[derive(Debug, Deserialize)]
+struct BillingPricing {
     standard: ContextPricing,
     fast: ContextPricing,
 }
@@ -121,7 +129,8 @@ struct Rates {
 
 #[derive(Debug)]
 struct CostEstimate {
-    usd: f64,
+    api_usd: f64,
+    plan_usd: f64,
     lower_bound: bool,
 }
 
@@ -182,8 +191,8 @@ fn normalize_tier(value: &str) -> String {
     }
 }
 
-/// Port of codex-monitor's explicit candidate list. We intentionally do not
-/// recursively search arbitrary JSON for a field named `service_tier`.
+/// Port of codex-monitor's explicit candidate list. Do not recursively search
+/// arbitrary JSON for a field merely named `service_tier`.
 fn extract_service_tier(payload: &Value) -> Option<String> {
     let candidates = [
         payload.pointer("/thread_settings/service_tier"),
@@ -212,33 +221,48 @@ fn resolve_model<'a>(model: &'a str, config: &'a PricingConfig) -> Option<(&'a s
     Some((key.as_str(), rates))
 }
 
-/// Port of codex-monitor's tier-aware formula. Only the rate data is refreshed
-/// from current official OpenAI sources; unknown model/tier combinations remain
-/// unpriced instead of being guessed.
-fn estimate_cost(usage: &RawUsage, model: &str, tier: &str) -> Option<CostEstimate> {
-    let config = pricing();
-    let (_, model_pricing) = resolve_model(model, config)?;
-    let tier = normalize_tier(tier);
-    let long = usage.input > config.long_context_threshold_tokens;
-    let rates = match (tier.as_str(), long) {
-        ("standard", false) => &model_pricing.standard.short,
-        ("standard", true) => &model_pricing.standard.long,
-        ("fast", false) => &model_pricing.fast.short,
-        ("fast", true) => &model_pricing.fast.long,
-        _ => return None,
-    };
+fn rates_for<'a>(pricing: &'a BillingPricing, tier: &str, long: bool) -> Option<&'a Rates> {
+    match (normalize_tier(tier).as_str(), long) {
+        ("standard", false) => Some(&pricing.standard.short),
+        ("standard", true) => Some(&pricing.standard.long),
+        ("fast", false) => Some(&pricing.fast.short),
+        ("fast", true) => Some(&pricing.fast.long),
+        _ => None,
+    }
+}
 
+fn estimate_with_rates(usage: &RawUsage, rates: &Rates) -> f64 {
     let cached = usage.cached.max(0).min(usage.input.max(0));
     let uncached = usage.input.max(0).saturating_sub(cached);
     let cache_write = usage.cache_write.map(|v| v.max(0).min(uncached)).unwrap_or(0);
     let regular_input = uncached.saturating_sub(cache_write);
-    let lower_bound = usage.cache_write.is_none() && uncached > 0 && rates.cache_write > 0.0;
-
-    let usd = (regular_input as f64 / 1_000_000.0) * rates.input
+    (regular_input as f64 / 1_000_000.0) * rates.input
         + (cached as f64 / 1_000_000.0) * rates.cached_input
         + (cache_write as f64 / 1_000_000.0) * rates.cache_write
-        + (usage.output.max(0) as f64 / 1_000_000.0) * rates.output;
-    Some(CostEstimate { usd, lower_bound })
+        + (usage.output.max(0) as f64 / 1_000_000.0) * rates.output
+}
+
+/// Produce two intentionally separate planning estimates:
+/// - `api_usd`: current public API-equivalent rates, including API Fast pricing.
+/// - `plan_usd`: included-plan / legacy-meter equivalent basis. For Sol this
+///   retains the launch basis because OpenAI says the promotional reduction does
+///   not change included plan usage, 5-hour/weekly limits or legacy metering.
+fn estimate_cost(usage: &RawUsage, model: &str, tier: &str) -> Option<CostEstimate> {
+    let config = pricing();
+    let (_, model_pricing) = resolve_model(model, config)?;
+    let long = usage.input > config.long_context_threshold_tokens;
+    let api_rates = rates_for(&model_pricing.api, tier, long)?;
+    let plan_rates = rates_for(&model_pricing.plan, tier, long)?;
+    let cached = usage.cached.max(0).min(usage.input.max(0));
+    let uncached = usage.input.max(0).saturating_sub(cached);
+    let lower_bound = usage.cache_write.is_none()
+        && uncached > 0
+        && (api_rates.cache_write > 0.0 || plan_rates.cache_write > 0.0);
+    Some(CostEstimate {
+        api_usd: estimate_with_rates(usage, api_rates),
+        plan_usd: estimate_with_rates(usage, plan_rates),
+        lower_bound,
+    })
 }
 
 fn timestamp_ms(value: Option<&Value>) -> Option<i64> {
@@ -381,8 +405,9 @@ pub fn collect(since: Option<&str>, scanner_settings: &ScannerSettings) -> Resul
     for request in requests {
         let mut metrics = request.usage.normalized_metrics();
         let priced = request.cost.is_some();
-        let lower_bound = request.cost.as_ref().is_some_and(|cost| cost.lower_bound);
-        metrics.cost_usd = request.cost.as_ref().map(|cost| cost.usd).unwrap_or(0.0);
+        let lower_bound = request.cost.as_ref().map(|cost| cost.lower_bound).unwrap_or(true);
+        metrics.cost_usd = request.cost.as_ref().map(|cost| cost.api_usd).unwrap_or(0.0);
+        metrics.plan_cost_usd = request.cost.as_ref().map(|cost| cost.plan_usd).unwrap_or(0.0);
 
         let day = by_date.entry(request.date.clone()).or_insert_with(|| DayReconciliation {
             tokens: 0,
@@ -426,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn current_sol_fast_short_context_example() {
+    fn sol_fast_has_separate_api_and_plan_equivalents() {
         let usage = RawUsage {
             input: 100_000,
             cached: 50_000,
@@ -436,10 +461,27 @@ mod tests {
             total: 110_000,
         };
         let cost = estimate_cost(&usage, "gpt-5.6-sol", "priority").unwrap();
-        // 40K regular input * $8/M + 50K cached * $0.8/M +
-        // 10K cache write * $10/M + 10K output * $40/M = $0.86.
-        assert!((cost.usd - 0.86).abs() < 1e-12);
+        // API Fast: 40K*$8 + 50K*$0.8 + 10K*$10 + 10K*$40 = $0.86.
+        assert!((cost.api_usd - 0.86).abs() < 1e-12);
+        // Included-plan/legacy basis: Sol launch rates stay unchanged for plan
+        // limits, with GPT-5.6 Codex/Work Fast metering at 2.5x.
+        assert!((cost.plan_usd - 1.46875).abs() < 1e-12);
         assert!(!cost.lower_bound);
+    }
+
+    #[test]
+    fn sol_standard_plan_preserves_launch_basis() {
+        let usage = RawUsage {
+            input: 100_000,
+            cached: 50_000,
+            cache_write: Some(0),
+            output: 10_000,
+            reasoning: 0,
+            total: 110_000,
+        };
+        let cost = estimate_cost(&usage, "gpt-5.6-sol", "standard").unwrap();
+        assert!((cost.api_usd - 0.60).abs() < 1e-12);
+        assert!((cost.plan_usd - 0.825).abs() < 1e-12);
     }
 
     #[test]
