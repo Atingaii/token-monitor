@@ -2,7 +2,7 @@ name: Rust CLI CI
 
 on:
   push:
-    branches: [main, feat/github-ledger-pages, feat/v1.1-dashboard-pricing-platform-fixes]
+    branches: [main]
   pull_request:
 
 concurrency:
