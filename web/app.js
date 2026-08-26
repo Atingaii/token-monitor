@@ -35,6 +35,16 @@
     provider: '原始 Provider',
     tier: 'Tier'
   };
+  const ROUTE_TYPE_LABELS = {
+    official: '官方',
+    cloud: '云服务',
+    aggregator: '聚合服务',
+    relay: '中转',
+    'inference-provider': '推理服务',
+    'self-hosted': '自托管',
+    custom: '自定义',
+    unknown: '未知'
+  };
 
   const state = {
     repo: '',
@@ -76,35 +86,67 @@
   ];
   const els = Object.fromEntries(ids.map(id => [id, $(id)]));
 
+  function trimZeros(text) {
+    return String(text).replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+  }
+
   function compact(value) {
     const number = Number(value || 0);
     const abs = Math.abs(number);
-    if (abs >= 1e12) return `${(number / 1e12).toFixed(abs >= 1e13 ? 1 : 2)}T`;
-    if (abs >= 1e9) return `${(number / 1e9).toFixed(abs >= 1e10 ? 1 : 2)}B`;
-    if (abs >= 1e6) return `${(number / 1e6).toFixed(abs >= 1e7 ? 1 : 2)}M`;
-    if (abs >= 1e3) return `${(number / 1e3).toFixed(abs >= 1e4 ? 1 : 2)}K`;
-    return Math.round(number).toLocaleString();
+    const units = [
+      [1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']
+    ];
+    for (const [divisor, suffix] of units) {
+      if (abs >= divisor) {
+        const scaled = number / divisor;
+        const digits = Math.abs(scaled) < 10 ? 2 : Math.abs(scaled) < 100 ? 1 : 0;
+        return `${trimZeros(scaled.toFixed(digits))}${suffix}`;
+      }
+    }
+    return Math.round(number).toLocaleString('zh-CN');
   }
 
   function integer(value) {
-    return Math.round(Number(value || 0)).toLocaleString();
+    return Math.round(Number(value || 0)).toLocaleString('zh-CN');
   }
 
-  function money(value) {
-    return `$${Number(value || 0).toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
+  function money(value, digits = 2) {
+    return `$${Number(value || 0).toLocaleString('en-US', {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits
     })}`;
+  }
+
+  function exactMetric(metric, value) {
+    if (metric === 'costUsd') return money(value, 4);
+    return integer(value);
   }
 
   function fmt(metric, value) {
     return (METRICS[metric]?.[1] || compact)(value);
   }
 
+  function axisFmt(metric, value) {
+    if (metric === 'costUsd') {
+      const abs = Math.abs(Number(value || 0));
+      const digits = abs < 1 ? 3 : abs < 100 ? 2 : 1;
+      return money(value, digits);
+    }
+    return compact(value);
+  }
+
   function esc(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[char]));
+  }
+
+  function displayDimensionValue(key, value, row = null) {
+    const text = String(value ?? '');
+    if (key === 'routeProvider' && (text === 'official' || row?.routeType === 'official')) return '官方';
+    if (key === 'routeType') return ROUTE_TYPE_LABELS[text] || text || '未知';
+    if (!text) return '—';
+    return text;
   }
 
   function deriveRepo() {
@@ -141,27 +183,17 @@
       Number(envelope?.schemaVersion) !== 1 ||
       envelope?.kdf !== 'PBKDF2-HMAC-SHA256' ||
       envelope?.algorithm !== 'AES-256-GCM'
-    ) {
-      throw new Error('不支持的 Dashboard 访问配置');
-    }
+    ) throw new Error('不支持的 Dashboard 访问配置');
+
     const salt = base64UrlBytes(envelope.salt);
     const nonce = base64UrlBytes(envelope.nonce);
     if (salt.length !== 16 || nonce.length !== 12) throw new Error('Dashboard 访问配置损坏');
 
     const material = await crypto.subtle.importKey(
-      'raw',
-      new TextEncoder().encode(password),
-      'PBKDF2',
-      false,
-      ['deriveKey']
+      'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']
     );
     const key = await crypto.subtle.deriveKey(
-      {
-        name: 'PBKDF2',
-        salt,
-        iterations: Number(envelope.iterations),
-        hash: 'SHA-256'
-      },
+      { name: 'PBKDF2', salt, iterations: Number(envelope.iterations), hash: 'SHA-256' },
       material,
       { name: 'AES-GCM', length: 256 },
       false,
@@ -275,15 +307,14 @@
       .map(ref => String(ref.ref || '').replace(/^refs\/heads\//, ''))
       .filter(branch => branch.startsWith(BRANCH_PREFIX));
     const settled = await Promise.allSettled(branches.map(branchLedger));
-    const ledgers = settled
-      .filter(item => item.status === 'fulfilled')
-      .map(item => item.value);
+    const ledgers = settled.filter(item => item.status === 'fulfilled').map(item => item.value);
     const failures = settled.filter(item => item.status === 'rejected');
     if (!ledgers.length && failures.length) throw failures[0].reason;
 
     state.ledgers = ledgers;
     state.rows = ledgers.flatMap(ledger => (ledger.rows || []).map(row => ({
       ...row,
+      routeProvider: row.routeType === 'official' ? 'official' : (row.routeProvider || 'unknown'),
       device: ledger.device?.id || 'unknown',
       deviceName: ledger.device?.name || ledger.device?.id || 'Unknown',
       platform: ledger.device?.platform || 'unknown',
@@ -298,9 +329,7 @@
     els.updatedAt.textContent = latest ? `数据 ${new Date(latest).toLocaleString()}` : '暂无设备快照';
     setSync(
       failures.length ? 'error' : 'ok',
-      failures.length
-        ? `${ledgers.length} 台已载入，${failures.length} 台失败`
-        : `${ledgers.length} 台设备已同步`
+      failures.length ? `${ledgers.length} 台已载入，${failures.length} 台失败` : `${ledgers.length} 台设备已同步`
     );
     showApp();
   }
@@ -312,9 +341,7 @@
     const pricing = latest?.pricing;
     if (pricing?.source) {
       els.pricingBadge.textContent = pricing.source;
-      els.pricingBadge.title = [pricing.policy, pricing.compatibility, pricing.sourceUrl]
-        .filter(Boolean)
-        .join('\n');
+      els.pricingBadge.title = [pricing.policy, pricing.compatibility, pricing.sourceUrl].filter(Boolean).join('\n');
     } else {
       els.pricingBadge.textContent = 'Legacy v1.0 价格口径';
       els.pricingBadge.title = '升级并重新同步后会切换为 CC Switch 兼容的订阅等价价格。';
@@ -326,9 +353,9 @@
     for (const row of state.rows) {
       const value = row[key];
       if (value === undefined || value === null || value === '') continue;
-      map.set(String(value), String(row[labelKey] ?? value));
+      map.set(String(value), displayDimensionValue(key, row[labelKey] ?? value, row));
     }
-    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1], 'zh-CN'));
   }
 
   function populateSelect(element, entries, allLabel, stateKey) {
@@ -364,9 +391,7 @@
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     if (state.range === 'all') return {};
-    if (state.range === 'custom') {
-      return { start: state.customStart || undefined, end: state.customEnd || undefined };
-    }
+    if (state.range === 'custom') return { start: state.customStart || undefined, end: state.customEnd || undefined };
     let start = new Date(today);
     if (state.range === 'today') return { start: dateKey(today), end: dateKey(today) };
     if (state.range === '7d') start.setDate(start.getDate() - 6);
@@ -389,32 +414,42 @@
     });
   }
 
+  function setMetricText(element, metric, value, prefix = '') {
+    const text = `${prefix}${fmt(metric, value)}`;
+    element.textContent = text;
+    element.title = `${prefix}${exactMetric(metric, value)}`;
+  }
+
   function renderSummary(rows) {
     const sum = A.sumRows(rows);
-    els.mTotal.textContent = compact(sum.totalTokens);
+    setMetricText(els.mTotal, 'totalTokens', sum.totalTokens);
     els.mCost.textContent = `${sum.costLowerBound ? '≥' : ''}${money(sum.costUsd)}`;
+    els.mCost.title = `${sum.costLowerBound ? '≥' : ''}${money(sum.costUsd, 4)}`;
     els.mCostNote.textContent = sum.costLowerBound ? '含无法完全确认的费用下限' : 'CC Switch 兼容订阅等价口径';
-    els.mInput.textContent = compact(sum.input);
-    els.mCache.textContent = compact(sum.cacheRead);
-    els.mOutput.textContent = compact(Number(sum.output || 0) + Number(sum.reasoning || 0));
-    els.mMessages.textContent = integer(sum.messages);
+    setMetricText(els.mInput, 'input', sum.input);
+    setMetricText(els.mCache, 'cacheRead', sum.cacheRead);
+    setMetricText(els.mOutput, 'output', Number(sum.output || 0) + Number(sum.reasoning || 0));
+    setMetricText(els.mMessages, 'messages', sum.messages);
   }
 
   function orderedItems(rows, dimension, metric) {
-    const items = A.groupRows(rows, dimension, metric);
+    const items = A.groupRows(rows, dimension, metric).map(item => ({
+      ...item,
+      displayKey: displayDimensionValue(dimension, item.key)
+    }));
     return dimension === 'date' ? items.sort((a, b) => a.key.localeCompare(b.key)) : items;
   }
 
   function renderRank(container, rows, dimension) {
-    const items = A.groupRows(rows, dimension, state.overviewMetric).slice(0, 6);
+    const items = orderedItems(rows, dimension, state.overviewMetric).slice(0, 6);
     if (!items.length) {
       container.innerHTML = '<div class="empty">当前筛选无数据</div>';
       return;
     }
     const max = Math.max(...items.map(item => item.value), 1);
     container.innerHTML = items.map(item => `
-      <div class="rank-row" title="${esc(item.key)}">
-        <span class="rank-name">${esc(item.key)}</span>
+      <div class="rank-row" title="${esc(`${item.displayKey} · ${exactMetric(state.overviewMetric, item.value)}`)}">
+        <span class="rank-name">${esc(item.displayKey)}</span>
         <span class="rank-track"><span class="rank-fill" style="width:${Math.max(1.5, item.value / max * 100)}%"></span></span>
         <span class="rank-value">${esc(fmt(state.overviewMetric, item.value))}</span>
       </div>
@@ -438,35 +473,60 @@
 
   function attachTip(element, text) {
     const tip = ensureTooltip();
+    const title = node('title');
+    title.textContent = text;
+    element.appendChild(title);
     element.addEventListener('pointermove', event => {
       tip.textContent = text;
-      tip.style.left = `${Math.min(window.innerWidth - 280, event.clientX + 12)}px`;
-      tip.style.top = `${Math.max(8, event.clientY - 34)}px`;
+      tip.style.left = `${Math.max(8, Math.min(window.innerWidth - 300, event.clientX + 12))}px`;
+      tip.style.top = `${Math.max(8, event.clientY - 38)}px`;
       tip.classList.add('visible');
     });
     element.addEventListener('pointerleave', () => tip.classList.remove('visible'));
   }
 
-  function frame(container) {
+  function niceAxis(maxValue, metric, targetSteps = 5) {
+    const max = Math.max(Number(maxValue || 0), 0);
+    if (max === 0) return { max: 1, step: .2, ticks: [0, .2, .4, .6, .8, 1] };
+    const rough = max / targetSteps;
+    const power = 10 ** Math.floor(Math.log10(rough));
+    const normalized = rough / power;
+    const factor = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 2.5 ? 2.5 : normalized <= 5 ? 5 : 10;
+    const step = factor * power;
+    const niceMax = Math.ceil(max / step) * step;
+    const ticks = [];
+    for (let value = 0; value <= niceMax + step * .001; value += step) ticks.push(value);
+    return { max: niceMax, step, ticks };
+  }
+
+  function frame(container, metric, maxValue, bottom = 44) {
     container.innerHTML = '';
     const width = Math.max(container.clientWidth || 700, 280);
     const height = Math.max(container.clientHeight || 320, 220);
-    const margin = { top: 16, right: 14, bottom: 32, left: 54 };
-    const svg = node('svg', { viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: 'none' });
+    const axis = niceAxis(maxValue, metric);
+    const yLabels = axis.ticks.map(value => axisFmt(metric, value));
+    const longest = Math.max(...yLabels.map(label => label.length), 4);
+    const left = Math.min(112, Math.max(58, 22 + longest * 7.2));
+    const margin = { top: 18, right: 18, bottom, left };
+    const svg = node('svg', { viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: 'xMidYMid meet' });
+    svg.setAttribute('role', 'img');
     container.appendChild(svg);
     return {
       root: svg,
       width,
       height,
       margin,
-      innerWidth: width - margin.left - margin.right,
-      innerHeight: height - margin.top - margin.bottom
+      innerWidth: Math.max(1, width - margin.left - margin.right),
+      innerHeight: Math.max(1, height - margin.top - margin.bottom),
+      axis,
+      yLabels
     };
   }
 
-  function drawGrid(layout, maxValue, steps = 4) {
-    for (let index = 0; index <= steps; index += 1) {
-      const ratio = index / steps;
+  function drawGrid(layout, metric) {
+    const ticks = [...layout.axis.ticks].reverse();
+    ticks.forEach((value, index) => {
+      const ratio = ticks.length <= 1 ? 0 : index / (ticks.length - 1);
       const y = layout.margin.top + layout.innerHeight * ratio;
       layout.root.appendChild(node('line', {
         x1: layout.margin.left,
@@ -476,13 +536,53 @@
         class: 'grid-line'
       }));
       const label = node('text', {
-        x: layout.margin.left - 8,
-        y: y + 3,
-        'text-anchor': 'end'
+        x: layout.margin.left - 10,
+        y: y + 4,
+        'text-anchor': 'end',
+        class: 'axis-label'
       });
-      label.textContent = compact(maxValue * (1 - ratio));
+      label.textContent = axisFmt(metric, value);
+      const title = node('title');
+      title.textContent = exactMetric(metric, value);
+      label.appendChild(title);
       layout.root.appendChild(label);
-    }
+    });
+  }
+
+  function categoryLabel(value, isDate = false) {
+    const text = String(value ?? '');
+    if (isDate && /^\d{4}-\d{2}-\d{2}$/.test(text)) return text.slice(5);
+    return text.length > 16 ? `${text.slice(0, 14)}…` : text;
+  }
+
+  function drawXLabels(layout, data, x, keyOf = item => item.displayKey || item.key) {
+    const isDate = data.length > 0 && data.every(item => /^\d{4}-\d{2}-\d{2}$/.test(String(item.key)));
+    const approxWidth = isDate ? 58 : 90;
+    const capacity = Math.max(2, Math.floor(layout.innerWidth / approxWidth));
+    const every = Math.max(1, Math.ceil(data.length / capacity));
+    const rotate = !isDate && data.length > Math.max(6, capacity * .75);
+    data.forEach((item, index) => {
+      if (index % every !== 0 && index !== data.length - 1) return;
+      const px = x(index);
+      const label = node('text', {
+        x: px,
+        y: layout.height - (rotate ? 8 : 10),
+        'text-anchor': rotate ? 'end' : (index === 0 ? 'start' : index === data.length - 1 ? 'end' : 'middle'),
+        class: 'axis-label x-axis-label'
+      });
+      if (rotate) label.setAttribute('transform', `rotate(-28 ${px} ${layout.height - 8})`);
+      const full = String(keyOf(item));
+      label.textContent = categoryLabel(full, isDate);
+      const title = node('title');
+      title.textContent = full;
+      label.appendChild(title);
+      layout.root.appendChild(label);
+    });
+  }
+
+  function tooltipText(metric, key, value, extra = '') {
+    const precise = exactMetric(metric, value);
+    return [String(key), extra, precise].filter(Boolean).join(' · ');
   }
 
   function lineChart(container, items, metric, area = false) {
@@ -491,11 +591,11 @@
       return;
     }
     const data = items.slice(-90);
-    const layout = frame(container);
-    const max = Math.max(...data.map(item => item.value), 1);
-    drawGrid(layout, max);
+    const rawMax = Math.max(...data.map(item => item.value), 0);
+    const layout = frame(container, metric, rawMax, 46);
+    drawGrid(layout, metric);
     const x = index => layout.margin.left + (data.length === 1 ? layout.innerWidth / 2 : index / (data.length - 1) * layout.innerWidth);
-    const y = value => layout.margin.top + layout.innerHeight - value / max * layout.innerHeight;
+    const y = value => layout.margin.top + layout.innerHeight - Number(value || 0) / layout.axis.max * layout.innerHeight;
     const points = data.map((item, index) => [x(index), y(item.value)]);
     const pathText = points.map(([px, py], index) => `${index ? 'L' : 'M'}${px},${py}`).join(' ');
 
@@ -508,21 +608,12 @@
     }
     layout.root.appendChild(node('path', { d: pathText, class: 'series-line' }));
 
-    const labelEvery = Math.max(1, Math.ceil(data.length / 7));
     data.forEach((item, index) => {
-      const circle = node('circle', { cx: x(index), cy: y(item.value), r: 3, class: 'series-dot' });
-      attachTip(circle, `${item.key} · ${fmt(metric, item.value)}`);
+      const circle = node('circle', { cx: x(index), cy: y(item.value), r: 3.2, class: 'series-dot' });
+      attachTip(circle, tooltipText(metric, item.displayKey || item.key, item.value));
       layout.root.appendChild(circle);
-      if (index % labelEvery === 0 || index === data.length - 1) {
-        const label = node('text', {
-          x: x(index),
-          y: layout.height - 8,
-          'text-anchor': index === 0 ? 'start' : index === data.length - 1 ? 'end' : 'middle'
-        });
-        label.textContent = item.key.length > 12 ? `${item.key.slice(0, 10)}…` : item.key;
-        layout.root.appendChild(label);
-      }
     });
+    drawXLabels(layout, data, x);
   }
 
   function barChart(container, items, metric) {
@@ -531,32 +622,28 @@
       container.innerHTML = '<div class="empty">当前筛选无数据</div>';
       return;
     }
-    const layout = frame(container);
-    const max = Math.max(...data.map(item => item.value), 1);
-    drawGrid(layout, max);
+    const rawMax = Math.max(...data.map(item => item.value), 0);
+    const layout = frame(container, metric, rawMax, data.length > 8 ? 66 : 46);
+    drawGrid(layout, metric);
     const slot = layout.innerWidth / data.length;
     const width = Math.max(2, Math.min(42, slot * .68));
-    const labelEvery = Math.max(1, Math.ceil(data.length / 8));
+    const xCenter = index => layout.margin.left + index * slot + slot / 2;
     data.forEach((item, index) => {
-      const height = item.value / max * layout.innerHeight;
-      const x = layout.margin.left + index * slot + (slot - width) / 2;
+      const height = Number(item.value || 0) / layout.axis.max * layout.innerHeight;
+      const x = xCenter(index) - width / 2;
       const y = layout.margin.top + layout.innerHeight - height;
       const rect = node('rect', { x, y, width, height: Math.max(height, 1), rx: 3, class: 'bar' });
-      attachTip(rect, `${item.key} · ${fmt(metric, item.value)}`);
+      attachTip(rect, tooltipText(metric, item.displayKey || item.key, item.value));
       layout.root.appendChild(rect);
-      if (index % labelEvery === 0 || index === data.length - 1) {
-        const label = node('text', { x: x + width / 2, y: layout.height - 8, 'text-anchor': 'middle' });
-        label.textContent = item.key.length > 10 ? `${item.key.slice(0, 8)}…` : item.key;
-        layout.root.appendChild(label);
-      }
     });
+    drawXLabels(layout, data, xCenter);
   }
 
   function renderLegend(container, labels) {
     const legend = document.createElement('div');
     legend.className = 'chart-legend';
     legend.innerHTML = labels.slice(0, 12).map((label, index) => `
-      <span class="legend-item"><i class="legend-dot" style="background:${PALETTE[index % PALETTE.length]}"></i>${esc(label)}</span>
+      <span class="legend-item" title="${esc(label)}"><i class="legend-dot" style="background:${PALETTE[index % PALETTE.length]}"></i>${esc(label)}</span>
     `).join('');
     container.appendChild(legend);
   }
@@ -573,42 +660,37 @@
       total: xValues.reduce((sum, x) => sum + matrix.value(x, stack), 0)
     })).sort((a, b) => b.total - a.total);
     const stacks = stackTotals.slice(0, 10).map(item => item.stack);
-    const layout = frame(container);
-    const totals = xValues.map(x => stacks.reduce((sum, stack) => sum + matrix.value(x, stack), 0));
-    const max = Math.max(...totals, 1);
-    drawGrid(layout, max);
+    const totals = xValues.map(xValue => stacks.reduce((sum, stack) => sum + matrix.value(xValue, stack), 0));
+    const rawMax = Math.max(...totals, 0);
+    const layout = frame(container, metric, rawMax, xValues.length > 8 ? 66 : 46);
+    drawGrid(layout, metric);
     const slot = layout.innerWidth / xValues.length;
     const width = Math.max(2, Math.min(36, slot * .72));
-    const labelEvery = Math.max(1, Math.ceil(xValues.length / 8));
+    const xCenter = index => layout.margin.left + index * slot + slot / 2;
 
     xValues.forEach((xValue, xIndex) => {
       let offset = 0;
       stacks.forEach((stack, stackIndex) => {
         const value = matrix.value(xValue, stack);
         if (value <= 0) return;
-        const height = value / max * layout.innerHeight;
-        const x = layout.margin.left + xIndex * slot + (slot - width) / 2;
+        const height = value / layout.axis.max * layout.innerHeight;
+        const x = xCenter(xIndex) - width / 2;
         const y = layout.margin.top + layout.innerHeight - offset - height;
         const rect = node('rect', {
           x, y, width, height: Math.max(1, height),
           fill: PALETTE[stackIndex % PALETTE.length],
           class: 'stack-bar'
         });
-        attachTip(rect, `${xValue} · ${stack} · ${fmt(metric, value)}`);
+        const displayX = displayDimensionValue(primary, xValue);
+        const displayStack = displayDimensionValue(secondary, stack);
+        attachTip(rect, tooltipText(metric, displayX, value, displayStack));
         layout.root.appendChild(rect);
         offset += height;
       });
-      if (xIndex % labelEvery === 0 || xIndex === xValues.length - 1) {
-        const label = node('text', {
-          x: layout.margin.left + xIndex * slot + slot / 2,
-          y: layout.height - 8,
-          'text-anchor': 'middle'
-        });
-        label.textContent = xValue.length > 10 ? `${xValue.slice(0, 8)}…` : xValue;
-        layout.root.appendChild(label);
-      }
     });
-    renderLegend(container, stacks);
+    const xData = xValues.map(key => ({ key, displayKey: displayDimensionValue(primary, key) }));
+    drawXLabels(layout, xData, xCenter);
+    renderLegend(container, stacks.map(stack => displayDimensionValue(secondary, stack)));
   }
 
   function donutChart(container, items, metric) {
@@ -619,9 +701,9 @@
     }
     const head = positive.slice(0, 8);
     const rest = positive.slice(8).reduce((sum, item) => sum + item.value, 0);
-    const data = rest > 0 ? [...head, { key: '其他', value: rest }] : head;
+    const data = rest > 0 ? [...head, { key: '其他', displayKey: '其他', value: rest }] : head;
     const total = data.reduce((sum, item) => sum + item.value, 0);
-    const layout = frame(container);
+    const layout = frame(container, metric, total, 22);
     const cx = layout.width / 2;
     const cy = layout.margin.top + layout.innerHeight / 2;
     const radius = Math.min(layout.innerWidth, layout.innerHeight) * .32;
@@ -639,14 +721,17 @@
         'stroke-dashoffset': -offset,
         transform: `rotate(-90 ${cx} ${cy})`
       });
-      attachTip(circle, `${item.key} · ${fmt(metric, item.value)} · ${(item.value / total * 100).toFixed(1)}%`);
+      attachTip(circle, `${item.displayKey || item.key} · ${exactMetric(metric, item.value)} · ${(item.value / total * 100).toFixed(2)}%`);
       layout.root.appendChild(circle);
       offset += length;
     });
     const center = node('text', { x: cx, y: cy + 5, 'text-anchor': 'middle', class: 'donut-center' });
     center.textContent = fmt(metric, total);
+    const title = node('title');
+    title.textContent = exactMetric(metric, total);
+    center.appendChild(title);
     layout.root.appendChild(center);
-    renderLegend(container, data.map(item => item.key));
+    renderLegend(container, data.map(item => item.displayKey || item.key));
   }
 
   function treemapChart(container, items, metric) {
@@ -655,7 +740,7 @@
       container.innerHTML = '<div class="empty">当前筛选无数据</div>';
       return;
     }
-    const layout = frame(container);
+    const layout = frame(container, metric, Math.max(...data.map(item => item.value), 1), 18);
     const rects = A.squarify(data, 8, 8, layout.width - 16, layout.height - 16);
     rects.forEach((item, index) => {
       const rect = node('rect', {
@@ -666,11 +751,12 @@
         rx: 5,
         fill: PALETTE[index % PALETTE.length]
       });
-      attachTip(rect, `${item.key} · ${fmt(metric, item.value)}`);
+      attachTip(rect, tooltipText(metric, item.displayKey || item.key, item.value));
       layout.root.appendChild(rect);
       if (item.width > 80 && item.height > 32) {
         const label = node('text', { x: item.x + 8, y: item.y + 18, class: 'treemap-label' });
-        label.textContent = item.key.length > 18 ? `${item.key.slice(0, 16)}…` : item.key;
+        const text = item.displayKey || item.key;
+        label.textContent = text.length > 18 ? `${text.slice(0, 16)}…` : text;
         layout.root.appendChild(label);
       }
     });
@@ -681,17 +767,25 @@
     return `<table class="data-table"><thead><tr>${headers.map(header =>
       `<th class="${header.number ? 'number' : ''}">${esc(header.label)}</th>`
     ).join('')}</tr></thead><tbody>${rows.map(row =>
-      `<tr>${headers.map(header =>
-        `<td class="${header.number ? 'number' : ''}">${header.render ? header.render(row[header.key], row) : esc(row[header.key])}</td>`
-      ).join('')}</tr>`
+      `<tr>${headers.map(header => {
+        const value = row[header.key];
+        const content = header.render ? header.render(value, row) : esc(displayDimensionValue(header.key, value, row));
+        return `<td class="${header.number ? 'number exact-number' : ''}" title="${header.title ? esc(header.title(value, row)) : ''}">${content}</td>`;
+      }).join('')}</tr>`
     ).join('')}</tbody></table>`;
   }
 
   function aggregateTable(rows, dimension, metric) {
     const items = orderedItems(rows, dimension, metric);
     els.analysisTable.innerHTML = tableHtml([
-      { key: 'key', label: DIMENSIONS[dimension] || dimension },
-      { key: 'value', label: METRICS[metric]?.[0] || metric, number: true, render: value => esc(fmt(metric, value)) }
+      { key: 'displayKey', label: DIMENSIONS[dimension] || dimension },
+      {
+        key: 'value',
+        label: METRICS[metric]?.[0] || metric,
+        number: true,
+        render: value => esc(exactMetric(metric, value)),
+        title: value => exactMetric(metric, value)
+      }
     ], items);
   }
 
@@ -701,8 +795,7 @@
     els.analysisChart.classList.toggle('hidden', state.chart === 'table');
     const items = orderedItems(rows, state.group, state.metric);
     els.analysisChart.title = state.metric === 'costUsd' && rows.some(row => row.costLowerBound)
-      ? '当前筛选包含费用下限估算。'
-      : '';
+      ? '当前筛选包含费用下限估算。' : '';
 
     if (state.chart === 'line') lineChart(els.analysisChart, items, state.metric, false);
     else if (state.chart === 'area') lineChart(els.analysisChart, items, state.metric, true);
@@ -736,8 +829,8 @@
       { key: 'platform', label: '平台' },
       { key: 'arch', label: '架构' },
       { key: 'version', label: 'CLI' },
-      { key: 'tokens', label: 'Tokens', number: true, render: value => esc(compact(value)) },
-      { key: 'cost', label: '订阅等价费用', number: true, render: (value, row) => esc(`${row.lowerBound ? '≥' : ''}${money(value)}`) },
+      { key: 'tokens', label: 'Tokens', number: true, render: value => esc(integer(value)), title: value => integer(value) },
+      { key: 'cost', label: '订阅等价费用', number: true, render: (value, row) => esc(`${row.lowerBound ? '≥' : ''}${money(value, 4)}`) },
       { key: 'messages', label: '记录', number: true, render: value => esc(integer(value)) },
       { key: 'updatedAt', label: '数据时间', render: value => esc(value ? new Date(value).toLocaleString() : '—') },
       { key: 'scanMs', label: '扫描耗时', number: true, render: value => esc(`${integer(value)} ms`) }
@@ -753,18 +846,18 @@
       { key: 'deviceName', label: '设备' },
       { key: 'client', label: '工具' },
       { key: 'upstreamVendor', label: '模型厂商' },
-      { key: 'routeProvider', label: '路由提供商' },
-      { key: 'routeType', label: '路由类型' },
+      { key: 'routeProvider', label: '路由提供商', render: (value, row) => esc(displayDimensionValue('routeProvider', value, row)) },
+      { key: 'routeType', label: '路由类型', render: value => esc(displayDimensionValue('routeType', value)) },
       { key: 'provider', label: '原始 Provider' },
       { key: 'model', label: '模型' },
       { key: 'tier', label: 'Tier' },
-      { key: 'input', label: 'Input', number: true, render: value => esc(compact(value)) },
-      { key: 'cacheRead', label: 'Cache R', number: true, render: value => esc(compact(value)) },
-      { key: 'cacheWrite', label: 'Cache W', number: true, render: value => esc(compact(value)) },
-      { key: 'output', label: 'Output', number: true, render: value => esc(compact(value)) },
-      { key: 'reasoning', label: 'Reasoning', number: true, render: value => esc(compact(value)) },
+      { key: 'input', label: 'Input', number: true, render: value => esc(integer(value)), title: value => integer(value) },
+      { key: 'cacheRead', label: 'Cache R', number: true, render: value => esc(integer(value)), title: value => integer(value) },
+      { key: 'cacheWrite', label: 'Cache W', number: true, render: value => esc(integer(value)), title: value => integer(value) },
+      { key: 'output', label: 'Output', number: true, render: value => esc(integer(value)), title: value => integer(value) },
+      { key: 'reasoning', label: 'Reasoning', number: true, render: value => esc(integer(value)), title: value => integer(value) },
       { key: 'messages', label: '记录', number: true, render: value => esc(integer(value)) },
-      { key: 'costUsd', label: '费用', number: true, render: (value, row) => esc(`${row.costLowerBound ? '≥' : ''}${money(value)}`) }
+      { key: 'costUsd', label: '费用', number: true, render: (value, row) => esc(`${row.costLowerBound ? '≥' : ''}${money(value, 4)}`) }
     ], data);
   }
 
@@ -772,12 +865,7 @@
     const rows = filtered();
     renderSummary(rows);
     if (state.view === 'overview') {
-      lineChart(
-        els.overviewTrend,
-        orderedItems(rows, 'date', state.overviewMetric),
-        state.overviewMetric,
-        true
-      );
+      lineChart(els.overviewTrend, orderedItems(rows, 'date', state.overviewMetric), state.overviewMetric, true);
       renderRank(els.deviceBars, rows, 'device');
       renderRank(els.routeBars, rows, 'routeProvider');
       renderRank(els.modelBars, rows, 'model');
