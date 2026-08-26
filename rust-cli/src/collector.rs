@@ -34,9 +34,6 @@ struct RowAccumulator {
 }
 
 fn load_pricing() -> Option<Arc<PricingService>> {
-    // Same fallback posture used by Tokscale's local reports: prefer an existing
-    // cache for offline operation, otherwise initialize the canonical pricing
-    // service. Token Monitor owns no general-purpose model price table.
     if let Some(cached) = PricingService::load_cached_any_age() {
         return Some(Arc::new(cached));
     }
@@ -57,9 +54,8 @@ fn usage_from_message(message: &ParsedMessage) -> TokenBreakdown {
     }
 }
 
-/// Delegate both general price arithmetic and coverage semantics to Tokscale.
-/// The separate included-plan estimate is intentionally not synthesized here;
-/// it is only populated by a source-specific adapter that can prove the tier.
+/// General price arithmetic and coverage semantics remain delegated to Tokscale.
+/// The separate plan estimate is never synthesized here.
 fn price_usage(
     model_id: &str,
     provider_id: Option<&str>,
@@ -102,9 +98,6 @@ fn load_scanner_settings() -> ScannerSettings {
         .unwrap_or_default()
 }
 
-/// Only claim parser-level provider evidence for clients whose Tokscale source
-/// schema explicitly carries provider identity. Other clients remain unknown
-/// unless the route-evidence adapter can prove it independently.
 fn parser_provider_is_explicit(client: &str, raw_provider: &str) -> bool {
     !raw_provider.trim().is_empty()
         && raw_provider != "unknown"
@@ -173,26 +166,28 @@ fn route_for_message(
     (normalize_text(raw_provider, "unknown"), identity)
 }
 
-fn canonical_codex_days(messages: &[ParsedMessage]) -> HashMap<String, codex_tier::DayReconciliation> {
-    let mut days: HashMap<String, codex_tier::DayReconciliation> = HashMap::new();
+fn canonical_codex_days(
+    messages: &[ParsedMessage],
+) -> HashMap<String, codex_tier::DayReconciliation> {
+    let mut days = HashMap::new();
     for message in messages.iter().filter(|message| message.client == "codex") {
         let (metrics, _) = metrics_from_message(message, None);
-        let day = days.entry(message.date.clone()).or_insert_with(|| codex_tier::DayReconciliation {
-            tokens: 0,
-            messages: 0,
-            all_priced: true,
-        });
+        let day = days
+            .entry(message.date.clone())
+            .or_insert_with(|| codex_tier::DayReconciliation {
+                tokens: 0,
+                messages: 0,
+                all_priced: true,
+            });
         day.tokens = day.tokens.saturating_add(metrics.total_tokens());
         day.messages = day.messages.saturating_add(metrics.messages);
     }
     days
 }
 
-/// The tier adapter is allowed to replace canonical Codex rows only when its
-/// token and message totals reconcile exactly for that day. Pricing coverage is
-/// deliberately *not* an acceptance condition: an unknown price is retained as
-/// a visible lower bound rather than throwing away otherwise-proven Fast/Standard
-/// evidence for the entire day.
+/// Tier subdivision is accepted only when additive token and message totals
+/// exactly reconcile with Tokscale. Price completeness is not an acceptance
+/// condition; incomplete price evidence remains an explicit lower bound.
 fn reconciled_codex_days(
     canonical: &HashMap<String, codex_tier::DayReconciliation>,
     enhanced: &codex_tier::EnhancementResult,
@@ -221,8 +216,6 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
     let incremental = since.is_some();
     let scanner_settings = load_scanner_settings();
 
-    // Single canonical accounting pass. Tokscale owns client discovery, parsing,
-    // dedup, model attribution and token-bucket normalization.
     let parsed = parse_local_clients(LocalParseOptions {
         home_dir: None,
         use_env_roots: true,
@@ -237,11 +230,10 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
 
     let route_evidence = evidence::scan(incremental);
     let pricing = load_pricing();
-
     let canonical_codex = canonical_codex_days(&parsed.messages);
-    let codex_enhancement = codex_tier::collect(since.as_deref(), &scanner_settings).unwrap_or_default();
+    let codex_enhancement =
+        codex_tier::collect(since.as_deref(), &scanner_settings).unwrap_or_default();
     let accepted_codex_days = reconciled_codex_days(&canonical_codex, &codex_enhancement);
-
     let mut grouped: BTreeMap<RowKey, RowAccumulator> = BTreeMap::new();
 
     for message in &parsed.messages {
@@ -250,7 +242,8 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
         }
         let client = normalize_text(&message.client, "unknown");
         let model = canonical_model_id(&message.model_id);
-        let (raw_provider, identity) = route_for_message(&route_evidence, message, &client, &model);
+        let (raw_provider, identity) =
+            route_for_message(&route_evidence, message, &client, &model);
         let (metrics, cost_lower_bound) = metrics_from_message(message, pricing.as_deref());
         add_grouped(
             &mut grouped,
@@ -300,7 +293,7 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
             },
             enhanced.metrics,
             enhanced.cost_lower_bound,
-            true,
+            enhanced.plan_cost_available,
         );
     }
 
@@ -324,8 +317,8 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
     }
 
     Ok(Ledger {
-        // v4 forces one remote write after upgrading from v1.0.0 so every
-        // existing device creates the new de-identified public.json snapshot.
+        // v4 guarantees one migration write from v1.0.0 so `public.json` is
+        // created even when the underlying usage totals did not change.
         schema_version: 4,
         generated_at: chrono::Utc::now().to_rfc3339(),
         device,
@@ -357,9 +350,6 @@ pub fn merge_incremental(mut previous: Ledger, partial: Ledger, since: &str) -> 
     previous
 }
 
-/// Used by the one-shot scheduler to avoid a GitHub write when accounting did
-/// not change. Schema/device identity remains part of the comparison so format
-/// migrations and re-setup always receive a first remote snapshot.
 pub fn same_accounting(left: &Ledger, right: &Ledger) -> bool {
     left.schema_version == right.schema_version
         && left.device.id == right.device.id
@@ -396,7 +386,11 @@ mod tests {
         assert!(clients.contains(&"claude".to_string()));
         assert!(clients.contains(&"opencode".to_string()));
         assert!(clients.contains(&"gemini".to_string()));
-        assert!(clients.len() >= 20, "expected broad Tokscale client coverage, got {}", clients.len());
+        assert!(
+            clients.len() >= 20,
+            "expected broad Tokscale client coverage, got {}",
+            clients.len()
+        );
     }
 
     #[test]
@@ -427,12 +421,8 @@ mod tests {
         assert_eq!(cost, 0.0);
         assert!(lower_bound);
 
-        let (offline_cost, offline_lower_bound) = price_usage(
-            "any-model",
-            Some("unknown"),
-            &usage,
-            None,
-        );
+        let (offline_cost, offline_lower_bound) =
+            price_usage("any-model", Some("unknown"), &usage, None);
         assert_eq!(offline_cost, 0.0);
         assert!(offline_lower_bound);
     }
@@ -441,22 +431,35 @@ mod tests {
     fn codex_enhancement_requires_exact_accounting_not_complete_pricing() {
         let canonical = HashMap::from([(
             "2026-08-26".to_string(),
-            codex_tier::DayReconciliation { tokens: 100, messages: 2, all_priced: true },
+            codex_tier::DayReconciliation {
+                tokens: 100,
+                messages: 2,
+                all_priced: true,
+            },
         )]);
         let exact_but_lower_bound = codex_tier::EnhancementResult {
             rows: Vec::new(),
             by_date: HashMap::from([(
                 "2026-08-26".to_string(),
-                codex_tier::DayReconciliation { tokens: 100, messages: 2, all_priced: false },
+                codex_tier::DayReconciliation {
+                    tokens: 100,
+                    messages: 2,
+                    all_priced: false,
+                },
             )]),
         };
-        assert!(reconciled_codex_days(&canonical, &exact_but_lower_bound).contains("2026-08-26"));
+        assert!(reconciled_codex_days(&canonical, &exact_but_lower_bound)
+            .contains("2026-08-26"));
 
         let mismatch = codex_tier::EnhancementResult {
             rows: Vec::new(),
             by_date: HashMap::from([(
                 "2026-08-26".to_string(),
-                codex_tier::DayReconciliation { tokens: 99, messages: 2, all_priced: true },
+                codex_tier::DayReconciliation {
+                    tokens: 99,
+                    messages: 2,
+                    all_priced: true,
+                },
             )]),
         };
         assert!(!reconciled_codex_days(&canonical, &mismatch).contains("2026-08-26"));
