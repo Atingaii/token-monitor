@@ -30,25 +30,19 @@ struct Cli {
 enum CommandKind {
     /// Configure the first device. The user's project fork is discovered/created automatically.
     Setup {
-        /// Advanced override for a renamed or organization-owned fork.
         #[arg(long)]
         repo: Option<String>,
-        /// GitHub credential. Usually omitted: env vars or an authenticated `gh` are auto-detected.
         #[arg(long)]
         token: Option<String>,
-        /// Friendly device name. Defaults to the hostname.
         #[arg(long)]
         device: Option<String>,
-        /// Snapshot cadence in minutes. No process stays resident between runs.
         #[arg(long, default_value_t = 15)]
         interval: u32,
-        /// Configure without installing the native OS timer.
         #[arg(long)]
         no_schedule: bool,
     },
     /// Add this machine to an existing Token Monitor workspace using its pair code.
     Join {
-        /// Pair code printed by `setup` or `invite` on an existing device.
         code: String,
         #[arg(long)]
         token: Option<String>,
@@ -57,22 +51,17 @@ enum CommandKind {
         #[arg(long)]
         no_schedule: bool,
     },
-    /// Incrementally collect local usage and replace this device's encrypted GitHub snapshot.
+    /// Incrementally collect local usage and replace this device's GitHub snapshot.
     Sync {
         #[arg(long)]
         full: bool,
         #[arg(long)]
         quiet: bool,
     },
-    /// Show local configuration, last sync and aggregate usage.
     Status,
-    /// List every AI coding client supported by the embedded Tokscale scanner.
     Clients,
-    /// Print a copy-paste command for adding another device.
     Invite,
-    /// Print only the dashboard URL.
     Dashboard,
-    /// Remove the native timer; optionally remove the remote snapshot and local data.
     Uninstall {
         #[arg(long)]
         remove_remote: bool,
@@ -136,9 +125,6 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
         )
     };
 
-    // Keep the fresh scan locally even when no remote write is needed. The
-    // scheduled process then exits without network mutation: idle devices create
-    // zero GitHub commits/refs and consume zero resident memory between runs.
     config::write_cached_ledger(&ledger)?;
     if previous_for_compare
         .as_ref()
@@ -153,7 +139,7 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
 
     let envelope = crypto::encrypt_ledger(&ledger, &config.dashboard_key)?;
     let github = GithubClient::new(config.repo.clone(), config.github_token.clone())?;
-    let branch = github.replace_snapshot(&config.device_id, &envelope)?;
+    let branch = github.replace_snapshot(&config.device_id, &envelope, &ledger)?;
     if !quiet {
         println!("Synced {} ({mode})", config.device_name);
         println!("  Branch: {branch}");
@@ -188,13 +174,7 @@ fn finish_onboarding(config: &Config, no_schedule: bool) -> Result<()> {
     Ok(())
 }
 
-fn setup(
-    repo: Option<String>,
-    token: Option<String>,
-    device: Option<String>,
-    interval: u32,
-    no_schedule: bool,
-) -> Result<()> {
+fn setup(repo: Option<String>, token: Option<String>, device: Option<String>, interval: u32, no_schedule: bool) -> Result<()> {
     let token = resolve_token(token)?;
     let repo = match repo {
         Some(repo) => config::normalize_repo(&repo)?,
@@ -213,12 +193,7 @@ fn setup(
     finish_onboarding(&config, no_schedule)
 }
 
-fn join(
-    code: String,
-    token: Option<String>,
-    device: Option<String>,
-    no_schedule: bool,
-) -> Result<()> {
+fn join(code: String, token: Option<String>, device: Option<String>, no_schedule: bool) -> Result<()> {
     let token = resolve_token(token)?;
     let config = config::from_join(&code, token, device)?;
     GithubClient::new(config.repo.clone(), config.github_token.clone())?
@@ -232,12 +207,7 @@ fn join(
 fn status() -> Result<()> {
     let config = config::load()?;
     println!("Token Monitor {}", env!("CARGO_PKG_VERSION"));
-    println!(
-        "Device: {} ({}/{})",
-        config.device_name,
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    );
+    println!("Device: {} ({}/{})", config.device_name, std::env::consts::OS, std::env::consts::ARCH);
     println!("Workspace fork: {}", config.repo);
     println!("Snapshot branch: {}", GithubClient::snapshot_branch(&config.device_id));
     println!("Interval: {} minutes", config.interval_minutes);
@@ -268,38 +238,18 @@ fn uninstall(remove_remote: bool, purge: bool) -> Result<()> {
             let _ = fs::remove_dir_all(dir);
         }
     }
-    println!(
-        "Automatic sync removed{}.",
-        if purge {
-            " and local configuration purged"
-        } else {
-            ""
-        }
-    );
+    println!("Automatic sync removed{}.", if purge { " and local configuration purged" } else { "" });
     Ok(())
 }
 
 fn real_main() -> Result<()> {
     match Cli::parse().command {
-        CommandKind::Setup {
-            repo,
-            token,
-            device,
-            interval,
-            no_schedule,
-        } => setup(repo, token, device, interval, no_schedule),
-        CommandKind::Join {
-            code,
-            token,
-            device,
-            no_schedule,
-        } => join(code, token, device, no_schedule),
+        CommandKind::Setup { repo, token, device, interval, no_schedule } => setup(repo, token, device, interval, no_schedule),
+        CommandKind::Join { code, token, device, no_schedule } => join(code, token, device, no_schedule),
         CommandKind::Sync { full, quiet } => run_sync(full, quiet),
         CommandKind::Status => status(),
         CommandKind::Clients => {
-            for client in collector::supported_clients() {
-                println!("{client}");
-            }
+            for client in collector::supported_clients() { println!("{client}"); }
             Ok(())
         }
         CommandKind::Invite => {
@@ -311,10 +261,7 @@ fn real_main() -> Result<()> {
             println!("{}", config::dashboard_url(&config::load()?));
             Ok(())
         }
-        CommandKind::Uninstall {
-            remove_remote,
-            purge,
-        } => uninstall(remove_remote, purge),
+        CommandKind::Uninstall { remove_remote, purge } => uninstall(remove_remote, purge),
     }
 }
 
