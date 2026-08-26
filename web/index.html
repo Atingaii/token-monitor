@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Token Monitor</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="brand" href="./"><span class="brand-mark">Σ</span><span>Token Monitor</span></a>
+      <nav>
+        <button class="nav-item active" data-view="overview">概览</button>
+        <button class="nav-item" data-view="analysis">用量分析</button>
+        <button class="nav-item" data-view="devices">设备</button>
+        <button class="nav-item" data-view="data">数据</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div id="syncState" class="sync-state"><span class="status-dot"></span><span>等待数据</span></div>
+        <button id="themeToggle" class="text-button">切换主题</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="viewTitle">概览</h1>
+          <p id="subtitle">跨设备 AI Coding Token 与 API 等价费用</p>
+        </div>
+        <div class="top-actions">
+          <span id="updatedAt" class="muted">—</span>
+          <button id="refreshButton" class="button">刷新</button>
+        </div>
+      </header>
+
+      <section id="unlockPanel" class="unlock hidden">
+        <h2>解锁统计数据</h2>
+        <p>数据在 GitHub 上以 AES-256-GCM 加密保存。密钥只在浏览器本地使用，不会发送给 GitHub。</p>
+        <div class="inline-form">
+          <input id="keyInput" type="password" autocomplete="off" placeholder="Dashboard key">
+          <button id="unlockButton" class="button primary">解锁</button>
+        </div>
+        <p id="unlockError" class="error"></p>
+      </section>
+
+      <div id="appContent" class="hidden">
+        <section class="filters" aria-label="数据筛选">
+          <div class="segmented" id="rangeButtons">
+            <button data-range="today">今日</button>
+            <button data-range="7d">7 天</button>
+            <button data-range="30d" class="active">30 天</button>
+            <button data-range="month">本月</button>
+            <button data-range="all">全部</button>
+            <button data-range="custom">自定义</button>
+          </div>
+          <div id="customRange" class="date-range hidden">
+            <input id="startDate" type="date"><span>—</span><input id="endDate" type="date">
+          </div>
+          <div class="filter-row">
+            <label>设备<select id="deviceFilter"><option value="*">全部设备</option></select></label>
+            <label>工具<select id="clientFilter"><option value="*">全部工具</option></select></label>
+            <label>模型<select id="modelFilter"><option value="*">全部模型</option></select></label>
+            <label>Provider<select id="providerFilter"><option value="*">全部 Provider</option></select></label>
+            <label>Tier<select id="tierFilter"><option value="*">全部 Tier</option></select></label>
+          </div>
+        </section>
+
+        <section class="summary-strip">
+          <div><span>总 Tokens</span><strong id="mTotal">—</strong><small id="mTotalDelta"></small></div>
+          <div><span>API 等价费用</span><strong id="mCost">—</strong></div>
+          <div><span>输入</span><strong id="mInput">—</strong></div>
+          <div><span>缓存读取</span><strong id="mCache">—</strong></div>
+          <div><span>输出</span><strong id="mOutput">—</strong></div>
+          <div><span>请求消息</span><strong id="mMessages">—</strong></div>
+        </section>
+
+        <section id="overviewView" class="view-panel">
+          <div class="section-head"><div><h2>用量趋势</h2><p>按时间查看 Token 与费用变化</p></div><div class="mini-controls"><select id="overviewMetric"></select></div></div>
+          <div id="overviewTrend" class="chart large-chart"></div>
+          <div class="split-section">
+            <div><div class="section-head"><h2>按设备</h2><button class="text-button jump-analysis" data-group="device">详细分析</button></div><div id="deviceBars" class="rank-list"></div></div>
+            <div><div class="section-head"><h2>按模型</h2><button class="text-button jump-analysis" data-group="model">详细分析</button></div><div id="modelBars" class="rank-list"></div></div>
+          </div>
+        </section>
+
+        <section id="analysisView" class="view-panel hidden">
+          <div class="analysis-toolbar">
+            <label>指标<select id="metricSelect"></select></label>
+            <label>分组<select id="groupSelect">
+              <option value="date">时间</option><option value="device">设备</option><option value="client">工具</option>
+              <option value="model">模型</option><option value="provider">Provider</option><option value="tier">Tier</option>
+            </select></label>
+            <label>图表<select id="chartSelect">
+              <option value="line">折线图</option><option value="area">面积图</option><option value="bar">柱状图</option>
+              <option value="stacked">堆叠柱</option><option value="donut">环形图</option><option value="treemap">树图</option><option value="table">表格</option>
+            </select></label>
+            <label>堆叠<select id="stackSelect">
+              <option value="device">设备</option><option value="client">工具</option><option value="model">模型</option><option value="provider">Provider</option><option value="tier">Tier</option>
+            </select></label>
+          </div>
+          <div id="analysisChart" class="chart analysis-chart"></div>
+          <div id="analysisTable" class="data-table-wrap"></div>
+        </section>
+
+        <section id="devicesView" class="view-panel hidden">
+          <div class="section-head"><div><h2>设备</h2><p>最近同步、平台与累计用量</p></div></div>
+          <div id="deviceTable" class="data-table-wrap"></div>
+        </section>
+
+        <section id="dataView" class="view-panel hidden">
+          <div class="section-head"><div><h2>聚合数据</h2><p>仅展示统计行，不包含 Prompt、回复、代码、路径或凭据</p></div><button id="exportCsv" class="button">导出 CSV</button></div>
+          <div id="rawTable" class="data-table-wrap"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>
