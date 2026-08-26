@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/assets/hero.svg" alt="Token Monitor — 无服务器跨设备 AI Coding 用量分析" width="100%" />
+  <img src=".github/assets/hero.svg" alt="Token Monitor" width="100%" />
 </p>
 
 <p align="center">
@@ -11,239 +11,295 @@
 </p>
 
 <p align="center">
-  <strong>一个轻量 CLI，连接所有设备、所有已支持 AI Coding 客户端，并在一个统一网页中查看用量。</strong>
+  <strong>一个轻量 CLI，把多台设备、多个 AI Coding 客户端的 Token、路由和费用聚合到同一个 Dashboard。</strong>
 </p>
 
 <p align="center">
   <a href="README.md">English</a> ·
-  <a href="#快速开始">快速开始</a> ·
-  <a href="#web-dashboard">Dashboard</a> ·
-  <a href="SOURCES.md">统计实现来源</a>
+  <a href="https://atingaii.github.io/token-monitor/">Dashboard</a> ·
+  <a href="SOURCES.md">计费与解析来源</a> ·
+  <a href="https://github.com/Atingaii/token-monitor/releases">Releases</a>
 </p>
 
-Token Monitor 是一个 **无服务器、跨设备的 AI Coding Token / 费用分析系统**。Windows、Linux、macOS 上只安装一个预编译 Rust 单文件程序；本地用量由固定版本的 Tokscale Core 负责解析和统计，设备只把规范化后的数字账本加密写入用户自己的 Token Monitor fork，再由中央 GitHub Pages Dashboard 在浏览器中本地解密并分析。
+## Token Monitor 是什么
 
-不需要 Electron、Node.js、Python、Docker、VPS、数据库、常驻 Hub，也不需要额外创建一个数据仓库。
+Token Monitor 是一个 **serverless、跨设备、CLI-only** 的 AI Coding 用量统计系统。
 
-## 为什么做这个项目
+它在 Windows、Linux、macOS 上读取本机 AI Coding 客户端的用量记录，通过固定版本的 **Tokscale Core** 完成客户端解析、Token 语义归一、去重和模型标准化；再由 Token Monitor 补充路由证据、订阅等价计价和加密同步。每台设备只运行短暂的一次性同步任务，不存在常驻 Electron/Node/Python 服务。
 
-普通 Token Monitor 往往只能回答“这台电脑用了多少”。这个项目重点解决的是跨设备问题：
+最终所有设备的数据都汇总到同一个静态 Dashboard：
 
-- Windows、Linux、Mac 一起用了多少 Token？
-- 哪台设备、哪个 CLI、哪个模型、哪个 Provider 路由消耗最多？
-- 同一个 GPT / Claude 模型到底走的是官方、Azure/AWS、OpenRouter 还是中转站？
-- 这些 Token 按 API 价格折算大约值多少钱？
-- 能否不运行常驻监控进程、不维护服务器，也完成长期统计？
+**https://atingaii.github.io/token-monitor/**
 
-## 设计原则
+Dashboard 使用你自己的 fork 作为加密数据存储，不需要 VPS、数据库或额外的数据仓库。
 
-| 原则 | 实现 |
+## 核心特性
+
+| 能力 | 实现 |
 | --- | --- |
-| **低负载** | 不运行常驻 daemon，由系统原生调度器短暂启动一次同步后退出。 |
-| **跨平台** | Windows / Linux / macOS，x64 与 ARM64 均进入 CI / Release 矩阵。 |
-| **成熟统计核心** | 客户端解析、Token 口径、去重、模型归一和通用计费使用固定的 **Tokscale v4.14.0**。 |
-| **证据驱动 Provider** | 模型厂商与实际路由分开；看到 GPT 模型不等于“OpenAI 官方”。 |
-| **隐私优先** | 只上传聚合数字和路由标签，并在上传前使用 AES-256-GCM 加密。 |
-| **无需数据服务器** | 每台设备只使用用户 fork 中一个独立 `tm-ledger-*` 分支。 |
-| **特殊统计失败即回退** | Codex Fast/Standard 只有与 Tokscale 当日总量严格对账成功才会展示。 |
+| 多客户端 | 直接复用 Tokscale v4.14.0 的成熟 parser/scanner，不重复造解析器 |
+| 多设备 | Windows / Linux / macOS，x64 + ARM64 |
+| 低负载 | OS 原生调度器每隔约 15 分钟启动一次 `sync --quiet`，执行完立即退出 |
+| 私有聚合 | 设备账本 AES-256-GCM 加密后写入各自 `tm-ledger-*` 分支 |
+| 好记的网址 | URL 不再携带长 `#key=...`；任意浏览器输入同一个 Dashboard 密码即可解锁 |
+| 路由分析 | 模型厂商、路由供应商、路由类型、原始 Provider 分开记录 |
+| 官方路由统一 | 已有证据确认是第一方官方时，路由供应商统一显示 **“官方”**；原始 provider 仍保留审计 |
+| 成熟价格来源 | 通用价格跟随 CC Switch 使用的 models.dev；GPT-5.6 使用 CC Switch / Sub2API 交叉验证的订阅等价费率 |
+| 精确图表 | 坐标轴自适应量级和边距；K/M/B/T 只用于可读刻度，hover/table 保留完整精确值 |
+| 无变化不写 GitHub | 本地 accounting snapshot 未变化时不创建新的远端 snapshot |
 
 ## 架构
 
 ```text
- Windows / Linux / macOS
-          │
-          │ 本地会话文件 / 数据库
-          ▼
-     Tokscale Core v4.14.0
-  解析 · 去重 · Token 口径
-  模型归一 · 通用计费
-          │
-          ▼
-      token-monitor
- Provider 路由证据 + 加密
-          │
-          │ AES-256-GCM snapshot
-          ▼
- YOUR_NAME/token-monitor fork
- ├─ main                    正常项目源码
- ├─ tm-ledger-<device-A>    加密 ledger.json
- ├─ tm-ledger-<device-B>    加密 ledger.json
- └─ tm-ledger-<device-C>    加密 ledger.json
-          │
-          ▼
- Atingaii GitHub Pages Dashboard
- 浏览器本地解密 + 筛选 + 图表
+Windows / Linux / macOS
+        │
+        │ local AI coding usage
+        ▼
+Tokscale Core v4.14.0
+parser · dedup · token semantics · model normalization
+        │
+        ▼
+Token Monitor
+route evidence · subscription-equivalent pricing
+        │
+        ├── AES-256-GCM ledger
+        │
+        ▼
+YOUR_NAME/token-monitor
+├── main                       源码
+├── tm-dashboard               access.json：密码包裹后的 workspace key
+├── tm-ledger-<device-A>       加密 ledger.json
+├── tm-ledger-<device-B>       加密 ledger.json
+└── tm-ledger-<device-C>       加密 ledger.json
+        │
+        ▼
+Atingaii GitHub Pages
+输入密码 → 浏览器本地解 key → 浏览器本地解密账本 → 分析
 ```
 
-设备同步不会向 `main` 写统计数据。每台设备只控制自己的 `tm-ledger-<device-hash>` 分支，因此不同设备不会争抢同一个文件；设备分支通过新的无父 snapshot commit 强制移动，不会不断积累大量可见 telemetry commit。
+设备同步不会把遥测写入 `main`。每个设备只 force-move 自己的无历史增长 snapshot branch，因此不会把周期同步变成主分支 commit 噪声。
 
-## 主要能力
+## 安装
 
-### 多客户端统计
-
-Token Monitor 不重新实现各个 AI Coding 客户端的 Token parser，而是直接使用固定版本 Tokscale Core 暴露的客户端集合，包括 Codex、Claude Code、OpenCode、Gemini 相关数据源、Kimi、Cursor 相关数据源、DeepSeek Harness、Copilot 等，以及 Tokscale v4.14.0 当前支持的其他客户端。
-
-安装后可以直接查看本版本实际支持的客户端：
-
-```bash
-token-monitor clients
-```
-
-统计来源、固定版本和边界见 [`SOURCES.md`](SOURCES.md)。
-
-### Provider / 路由身份
-
-账本把以下身份分开保存：
-
-| 字段 | 含义 | 示例 |
-| --- | --- | --- |
-| `model` | 规范化模型 | `gpt-5.6-sol` |
-| `upstreamVendor` | 模型所属厂商 | `openai` |
-| `routeProvider` | 有证据时识别出的实际路由/计费方 | `azure-openai`、`aws-bedrock`、`openrouter`、`newapi` |
-| `routeType` | 路由类型 | `official`、`cloud`、`aggregator`、`relay`、`self-hosted`、`unknown` |
-
-核心规则是：**模型身份不等于路由身份**。如果日志只能证明模型属于 OpenAI，那么 `upstreamVendor` 可以是 `openai`，但 `routeProvider` 仍应是 `unknown`，不会为了展示好看而标成官方。
-
-可区分的路由包括官方 API、Azure OpenAI、AWS Bedrock、Google Vertex、OpenRouter、New API / One API / LiteLLM / CLIProxyAPI 类中转、推理服务、自托管以及证据不足的未知路由。
-
-### Codex Fast / Standard
-
-Codex request-level Fast/Standard 增强只负责补充 Tokscale 目前没有直接暴露的 service-tier 维度，其解析和 tier-aware 计费逻辑来自 MIT 开源项目 `falyx6851-byte/codex-monitor` 的成熟实现思路。
-
-它**不能修改 Codex 主统计口径**。只有当增强解析得到的当日 Token 总量和 message count 与 Tokscale canonical 结果完全一致时，才允许把当日 Codex 数据拆成 Fast / Standard；对账失败则整日回退到 Tokscale，不展示不可信 Tier 明细。
-
-### API 等价费用
-
-`costUsd` 表示 **API-equivalent cost（API 等价估值）**，不是 ChatGPT / Codex 订阅实际账单。
-
-通用模型费用继续由 Tokscale 计价；Codex service-tier 价格只存在于隔离的 Tier 增强层。如果源日志缺少 cache-write 等实际计费字段，相关费用会标为**下限估算**，网页不会把它伪装成精确值。
-
-## Web Dashboard
-
-Dashboard 采用克制的后台分析界面，而不是大量渐变和卡片堆叠。
-
-支持：
-
-- 今日 / 7 天 / 30 天 / 本月 / 全部 / 自定义时间
-- 按设备、客户端、模型、模型厂商、路由 Provider、路由类型、原始 Provider、Tier 联动筛选
-- Total Tokens、Input、Cache Read、Cache Write、Output、Reasoning、Messages、API 等价费用
-- 折线图、面积图、柱状图、堆叠柱、环形图、Treemap、表格
-- CSV 导出
-- Light / Dark
-- 浏览器本地 AES-GCM 解密
-
-用户自己的 fork **不需要单独配置 GitHub Pages**。中央 Dashboard 会读取 URL 指定 fork 中的加密 `tm-ledger-*` 分支。
-
-## 快速开始
-
-### 1. 安装
-
-**macOS / Linux**
+### macOS / Linux
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Atingaii/token-monitor/main/install.sh | sh
 ```
 
-**Windows PowerShell**
+Linux v1.1+ Release 使用 **musl 静态二进制**，发布 CI 会明确拒绝带 glibc symbol-version 依赖的 Linux artifact。因此旧版 Debian / Ubuntu / CentOS 类系统不再要求与 GitHub runner 相同的新 glibc。
+
+`curl | sh` 运行在子 shell 中，无法修改你当前父 shell 的 PATH。安装器会优先选择已经在 PATH 中的用户目录；若做不到，会直接打印一个当前终端可执行的绝对路径，例如：
+
+```bash
+'/home/you/.local/bin/token-monitor' setup
+```
+
+新终端会读取安装器写入的 shell profile。
+
+### Windows PowerShell
 
 ```powershell
 irm https://raw.githubusercontent.com/Atingaii/token-monitor/main/install.ps1 | iex
 ```
 
-安装脚本只下载对应平台预编译程序并校验 SHA-256，不安装 Rust、Node.js 或 Python。
+支持 Windows PowerShell 5.1 和 PowerShell 7。安装器包含 TLS 1.2 兼容、x64/ARM64 原生架构检测、SHA-256 校验和 PATH fallback。
 
-### 2. 第一台设备
+> **不要在 Windows PowerShell 里运行 `curl -fsSL ... | sh`。** Windows PowerShell 中的 `curl` 通常是 `Invoke-WebRequest` 的别名，并不支持 Unix curl 的 `-fsSL` 参数；Windows 必须使用上面的 `irm ... | iex` 命令。
+
+如果当前 PowerShell 宿主没有立即继承新的用户 PATH，安装器会同时打印 `token-monitor.exe` 的绝对 `setup` 命令。
+
+## 快速开始
+
+### 第一台设备
 
 ```bash
 token-monitor setup
 ```
 
-这一条命令会自动完成：
+`setup` 会：
 
-1. 从显式参数、环境变量或已登录的 `gh` 中取得 GitHub 写入凭据；
-2. 查找当前账号的 `token-monitor` fork；没有时尝试自动 fork；
-3. 生成 Dashboard 加密 key；
-4. 执行首次全量扫描；
-5. 写入第一份加密设备 snapshot；
-6. 安装当前操作系统的低负载定时同步；
-7. 输出 Dashboard 地址和下一台设备可以直接复制的 join 命令。
+1. 自动解析 GitHub 凭据；
+2. 找到你的 `token-monitor` fork，必要时自动 fork；
+3. 生成随机 256-bit workspace key；
+4. 隐藏输入一个你容易记住的 Dashboard 密码；
+5. 使用 PBKDF2-HMAC-SHA256 + AES-256-GCM 包裹 workspace key，并写入 `tm-dashboard/access.json`；
+6. 执行完整本地扫描并上传首份加密账本；
+7. 安装原生低负载调度器；
+8. 输出 Dashboard 地址和新设备 join 命令。
 
-不需要再创建 `token-monitor-data` 之类的第二个仓库。
+Dashboard 地址稳定为：
 
-如果 fork 被改名或属于组织，可以使用高级参数：
-
-```bash
-token-monitor setup --repo OWNER/RENAMED_FORK
+```text
+https://atingaii.github.io/token-monitor/?repo=YOUR_NAME/token-monitor
 ```
 
-### 3. 添加其他设备
+**不再包含随机 AES key。** 换浏览器、换电脑、无痕窗口都只需要输入同一个 Dashboard 密码。
 
-第一台机器会直接打印类似：
+### 添加其他设备
+
+第一台设备会打印：
 
 ```bash
-token-monitor join 'eyJ2ZXJzaW9uIjoyLC4uLn0'
+token-monitor join '<PAIR_CODE>'
 ```
 
-在另一台 Windows / Linux / macOS 上原样粘贴即可。如果之后忘了配对命令：
+把这条命令复制到另一台机器即可。Pair Code 包含仓库地址、workspace key 和同步间隔，不包含 GitHub Token。它仍属于敏感工作区凭据，不应公开。
+
+以后重新查看 join 命令：
 
 ```bash
 token-monitor invite
 ```
 
-Pair Code 只包含 fork 地址、Dashboard 解密 key 和同步周期，**不包含 GitHub Token**。
+## Dashboard 密码
 
-## GitHub 身份验证
+密码不是直接拿来加密全部账本，而是只负责包裹随机 workspace key：
 
-凭据自动查找顺序：
+```text
+你的密码
+  │ PBKDF2-HMAC-SHA256 / 310,000 iterations / random salt
+  ▼
+wrapping key
+  │ AES-256-GCM
+  ▼
+随机 workspace key
+  │ AES-256-GCM
+  ▼
+各设备 ledger.json
+```
 
-1. `--token`
-2. `TOKEN_MONITOR_GITHUB_TOKEN`
-3. `GITHUB_TOKEN`
-4. `GH_TOKEN`
-5. 已登录的 `gh auth token`
-6. 最后才隐藏输入一次 Token
+GitHub 只保存 salt、nonce、迭代次数和密文，不保存密码。浏览器每次输入密码后在本地完成解包，密码不会进入 URL，也不依赖 localStorage 才能跨浏览器使用。
 
-GitHub 凭据只用于用户 fork 和加密设备分支写入，不会出现在 Pair Code 或 Dashboard URL 中。
+纯静态架构无法阻止攻击者下载 `access.json` 后进行离线猜密码，因此建议使用较长、好记的 passphrase，而不是弱的 8 位数字。
 
-## 低负载策略
+修改密码：
 
-Token Monitor 默认没有常驻进程。
+```bash
+token-monitor password
+```
 
-| 平台 | 调度方式 |
+只会重新包裹同一个 workspace key，不需要重写各设备历史账本。
+
+## 从 v1.0 升级到 v1.1
+
+重新运行对应系统的安装命令覆盖旧二进制，然后在任意一台已经配置好的设备执行：
+
+```bash
+token-monitor password
+token-monitor sync
+```
+
+v1.1 会发现本地 ledger schema/价格语义已经升级，**自动忽略旧缓存并执行一次 full rescan + 全历史重新计价**。因此不会出现“最近两天按新价格、更早历史仍按旧价格”的混合账本。第一次迁移完成后，后续同步自动恢复为两天 overlap 的增量扫描。
+
+旧 `#key=...` 链接仍保留读取兼容，但新 CLI 不再输出这种链接。
+
+## 价格口径
+
+Dashboard 显示的是 **订阅等价费用（Subscription-equivalent cost）**，不是 OpenAI/Anthropic 的真实发票，也不是 ChatGPT/Codex 后台实际扣款。
+
+### GPT-5.6
+
+GPT-5.6 采用 CC Switch 当前内置价格，并由 Sub2API fallback 独立交叉核验。单位为 USD / 1M Tokens：
+
+| 模型 | Input | Cache Read | Cache Write | Output |
+| --- | ---: | ---: | ---: | ---: |
+| GPT-5.6 Sol | **$5.00** | **$0.50** | **$6.25** | **$30.00** |
+| GPT-5.6 Terra | $2.00 | $0.20 | $2.50 | $12.00 |
+| GPT-5.6 Luna | $0.20 | $0.02 | $0.25 | $1.20 |
+
+Fast / Priority 使用 GPT-5.6 明确的 **2×** tier 价格。长上下文 `>272K` 判断发生在**单次请求粒度**，随后才聚合，避免把一天几百万 Token 错当成一次长上下文请求。
+
+例如：
+
+```text
+182,000 fresh input × $5/M
+6,080,000 cache read × $0.50/M
+12,000 output × $30/M
+≈ $4.31
+```
+
+这就是为什么旧 API `$4/$20/$0.40` 口径约 `$3.40`，而 v1.1 的 CC Switch 兼容订阅等价口径约 `$4.31`。
+
+### 其他模型
+
+通用价格目录使用 CC Switch 同源的：
+
+```text
+https://models.dev/api.json
+```
+
+同一 normalized model 若存在多个 provider 条目，Token Monitor 会优先模型家族的 canonical provider，并使用稳定排序，避免 HashMap 遍历顺序导致不同机器取到不同价格。找不到完整价格的 Token bucket 会明确标为 lower bound，不会用相邻模型自行猜价。
+
+详细来源、版本和许可证见 [`SOURCES.md`](SOURCES.md)。
+
+## 路由语义
+
+路由不会只靠模型名猜测。
+
+| 字段 | 含义 | 示例 |
+| --- | --- | --- |
+| `model` | 标准化模型 | `gpt-5.6-sol` |
+| `upstreamVendor` | 模型厂商 | `openai` |
+| `routeProvider` | 实际路由供应商 | `official`, `azure-openai`, `openrouter`, `newapi` |
+| `routeType` | 路由类别 | `official`, `cloud`, `aggregator`, `relay`, `unknown` |
+| `provider` | 原始来源 provider | 保留用于审计 |
+
+一旦明确证明是 OpenAI / Anthropic / Google 等第一方官方路由，`routeProvider` 统一规范为 `official`，中文 Dashboard 显示 **“官方”**。厂商信息仍然由 `upstreamVendor` 保留，所以不会丢失“这是 OpenAI 还是 Anthropic”的维度。
+
+如果只是看到 GPT / Claude 模型、但没有第一方路由证据，则不会标记为官方。
+
+## Dashboard 设计
+
+v1.1 Dashboard 使用现代、克制的管理后台视觉语言：中性白/灰表面、轻边框、蓝色强调、紧凑筛选和可折叠侧边栏。设计参考当前 New API 的信息架构和视觉方向，但实现代码为 Token Monitor 自己编写，不复制其 AGPL 前端实现。
+
+Dashboard 支持：
+
+- 今日 / 7 天 / 30 天 / 本月 / 全部 / 自定义范围
+- 设备、客户端、模型、模型厂商、路由供应商、路由类型、原始 Provider、Tier 联动筛选
+- 折线、面积、柱状、堆叠柱、环形、Treemap、表格
+- CSV 导出
+- Light / Dark
+- 桌面侧边栏折叠；移动端 drawer
+- Y 轴 nice-scale、自适应左边距和 K/M/B/T 可读刻度
+- X 轴按空间自动抽样，长标签自动旋转/省略
+- 图表 tooltip 展示完整数值；表格 Token 使用完整千位分隔整数，费用显示到 4 位小数
+
+## 后台负载
+
+| 平台 | 调度器 |
 | --- | --- |
 | Windows | Task Scheduler |
-| macOS | `launchd` |
-| Linux | `systemd --user` timer，失败时回退 cron |
+| macOS | launchd |
+| Linux | systemd --user timer；失败时回退 cron |
 
-默认每 15 分钟执行一次短暂增量同步。增量扫描只重扫最近两天以覆盖延迟写入和跨日情况；如果统计数字没有变化，本次同步连 GitHub snapshot 写入都会跳过。
+默认每 15 分钟执行一次。没有 Token Monitor 进程常驻内存。没有 accounting 变化时不会写 GitHub。
 
-## 隐私模型
+## 隐私边界
 
-加密账本只包含规范化的聚合统计，例如：
+加密账本允许上传：
 
-- 日期与设备标识
-- 客户端、模型、Provider/路由标签、可选 Tier
-- Input / Cache / Output / Reasoning Token buckets
-- message count
-- API 等价费用，以及必要时的 lower-bound 标记
+- 日期、设备标识
+- client / model / provider / route / tier 标签
+- input / cache read / cache write / output / reasoning Token
+- 可加总记录数
+- 订阅等价费用和 lower-bound 标志
 
 不会上传：
 
-- Prompt / 模型回复
-- reasoning 文本
-- 源代码 / 项目内容
+- Prompt / 回复 / reasoning 文本
+- 源代码和项目内容
 - 项目路径
-- 完整 JSONL / SQLite Session 数据
+- 完整 JSONL / SQLite session
 - `auth.json`
 - API Key / GitHub Token
 
-账本上传前用随机 256-bit key 执行 AES-256-GCM 加密。Dashboard key 放在 URL fragment（`#key=...`）中，浏览器不会把 fragment 随 HTTP 请求发送给 GitHub。
-
-## 常用命令
+## CLI
 
 ```text
 token-monitor setup [--repo OWNER/REPO]
 token-monitor join <PAIR_CODE>
+token-monitor password
 token-monitor invite
 token-monitor sync [--full]
 token-monitor status
@@ -252,54 +308,35 @@ token-monitor dashboard
 token-monitor uninstall [--remove-remote] [--purge]
 ```
 
-## 测试与发布门槛
+## 发布门槛
 
-CI 不是只在一台 Linux 上做编译，而是覆盖：
+正式 Release 不以“Linux 编译成功”作为完成标准。CI / Release 会覆盖：
 
-- Linux x86_64
-- Linux ARM64
+- Linux x86_64 musl
+- Linux ARM64 musl
 - Windows x86_64
 - Windows ARM64
 - macOS Intel
 - macOS Apple Silicon
-- Rust `clippy`
-- Dashboard 语法、筛选/聚合、CSV、隐私回归测试
-- 固定 Tokscale v4.14.0 的完整 parser/scanner 回归测试套件
+- Rust clippy
+- Dashboard JS / analytics / privacy regression
+- Tokscale v4.14.0 完整 parser/scanner regression
+- 发布后从 GitHub Release 真正执行安装器
+- Windows PowerShell 7 + **Windows PowerShell 5.1** 安装 smoke test
+- Linux ELF 静态链接 / GLIBC symbol-version 守卫
 
-Release workflow 对应发布同样六种 OS / 架构的单文件程序。
+## 来源与许可证
 
-## 从源码构建
+Token Monitor 为 MIT License。项目会明确记录复用或适配的成熟实现来源：
 
-普通用户不需要 Rust。开发者可以：
+- `Javis603/token-monitor`
+- `junhoyeo/tokscale` v4.14.0
+- `falyx6851-byte/codex-monitor`
+- CC Switch 的 models.dev 定价同步思路和 GPT-5.6 参数参考
+- Sub2API 的 LiteLLM 定价来源与 GPT-5.6 fallback 交叉核验
 
-```bash
-cargo test --workspace --all-targets
-cargo build --release --workspace
-```
+具体版本、职责边界与许可证见 [`NOTICE`](NOTICE) 和 [`SOURCES.md`](SOURCES.md)。
 
-## 仓库结构
+## Contributing
 
-```text
-rust-cli/     轻量采集、加密、GitHub 同步与系统调度
-web/          静态分析 Dashboard
-.github/      CI、Release、Pages workflow 与项目头图
-SOURCES.md    核心统计实现来源、固定版本与边界
-```
-
-## 参与贡献
-
-欢迎 Issue 和 PR。修改统计、Provider 归因、加密或发布链路之前，请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)。统计核心优先复用成熟上游实现并保留来源与测试，不新增第二套未经验证的 parser / pricing 逻辑。
-
-## 安全问题
-
-凭据、加密账本或其他安全问题请参考 [`SECURITY.md`](SECURITY.md)。不要在公开 Issue 中提交真实 Token、密钥或包含隐私内容的会话文件。
-
-## 上游与来源
-
-本项目由 [Javis603/token-monitor](https://github.com/Javis603/token-monitor) 针对 serverless multi-device 场景重构；多客户端统计核心使用 [junhoyeo/tokscale](https://github.com/junhoyeo/tokscale) v4.14.0；Codex service-tier 增强参考 MIT 开源项目 [falyx6851-byte/codex-monitor](https://github.com/falyx6851-byte/codex-monitor)。
-
-详细来源见 [`SOURCES.md`](SOURCES.md) 和 [`NOTICE`](NOTICE)。
-
-## License
-
-[MIT](LICENSE)，并按要求保留上游版权与许可证声明。
+提交代码前请阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md) 和 [`SECURITY.md`](SECURITY.md)。对于 parser / token accounting，优先修复或升级成熟上游实现；不要在 Token Monitor 中复制一套未经验证的新 parser。

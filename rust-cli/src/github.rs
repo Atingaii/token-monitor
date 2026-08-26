@@ -8,11 +8,12 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::crypto::device_hash;
-use crate::model::EncryptedLedger;
+use crate::model::{DashboardAccessEnvelope, EncryptedLedger};
 
 const API: &str = "https://api.github.com";
 const API_VERSION: &str = "2022-11-28";
 pub const UPSTREAM_REPO: &str = "Atingaii/token-monitor";
+pub const DASHBOARD_BRANCH: &str = "tm-dashboard";
 
 pub struct GithubClient {
     http: Client,
@@ -21,15 +22,25 @@ pub struct GithubClient {
 }
 
 #[derive(Deserialize)]
-struct ShaResponse { sha: String }
+struct ShaResponse {
+    sha: String,
+}
 #[derive(Deserialize)]
-struct GitObject { sha: String }
+struct GitObject {
+    sha: String,
+}
 #[derive(Deserialize)]
-struct RefResponse { object: GitObject }
+struct RefResponse {
+    object: GitObject,
+}
 #[derive(Deserialize)]
-struct UserResponse { login: String }
+struct UserResponse {
+    login: String,
+}
 #[derive(Deserialize)]
-struct ParentResponse { full_name: String }
+struct ParentResponse {
+    full_name: String,
+}
 #[derive(Deserialize)]
 struct RepositoryResponse {
     private: bool,
@@ -45,17 +56,22 @@ fn http_client() -> Result<Client> {
 
 fn request(http: &Client, token: &str, method: reqwest::Method, url: String) -> RequestBuilder {
     http.request(method, url)
-        .header(USER_AGENT, "token-monitor/1.0")
+        .header(USER_AGENT, "token-monitor/1.1")
         .header(ACCEPT, "application/vnd.github+json")
         .header("X-GitHub-Api-Version", API_VERSION)
         .header(AUTHORIZATION, format!("Bearer {token}"))
 }
 
 fn checked(response: Response, action: &str) -> Result<Response> {
-    if response.status().is_success() { return Ok(response); }
+    if response.status().is_success() {
+        return Ok(response);
+    }
     let status = response.status();
     let body = response.text().unwrap_or_default();
-    bail!("GitHub {action} failed ({status}): {}", body.chars().take(500).collect::<String>())
+    bail!(
+        "GitHub {action} failed ({status}): {}",
+        body.chars().take(500).collect::<String>()
+    )
 }
 
 fn repo_is_upstream_fork(repository: &RepositoryResponse) -> bool {
@@ -66,16 +82,13 @@ fn repo_is_upstream_fork(repository: &RepositoryResponse) -> bool {
             }))
 }
 
-/// Resolve the user's own fork of this project. The common path is completely
-/// automatic: `<login>/token-monitor` is reused when it is already a fork; if it
-/// does not exist, GitHub's fork API creates it. `--repo` remains available for
-/// renamed forks or organization-owned forks.
 pub fn ensure_user_fork(token: &str) -> Result<String> {
     let http = http_client()?;
     let user: UserResponse = checked(
         request(&http, token, reqwest::Method::GET, format!("{API}/user")).send()?,
         "account discovery",
-    )?.json()?;
+    )?
+    .json()?;
     let expected = format!("{}/token-monitor", user.login);
     let repo_url = format!("{API}/repos/{expected}");
     let existing = request(&http, token, reqwest::Method::GET, repo_url.clone()).send()?;
@@ -105,8 +118,6 @@ pub fn ensure_user_fork(token: &str) -> Result<String> {
         checked(create, "automatic fork creation")?;
     }
 
-    // Fork creation is asynchronous inside GitHub. Poll the exact target repo;
-    // this keeps the CLI one-command while remaining bounded.
     for _ in 0..20 {
         let response = request(&http, token, reqwest::Method::GET, repo_url.clone()).send()?;
         if response.status().is_success() {
@@ -122,7 +133,11 @@ pub fn ensure_user_fork(token: &str) -> Result<String> {
 
 impl GithubClient {
     pub fn new(repo: String, token: String) -> Result<Self> {
-        Ok(Self { http: http_client()?, repo, token })
+        Ok(Self {
+            http: http_client()?,
+            repo,
+            token,
+        })
     }
 
     fn request(&self, method: reqwest::Method, url: String) -> RequestBuilder {
@@ -131,7 +146,8 @@ impl GithubClient {
 
     pub fn validate(&self) -> Result<()> {
         let response = checked(
-            self.request(reqwest::Method::GET, format!("{API}/repos/{}", self.repo)).send()?,
+            self.request(reqwest::Method::GET, format!("{API}/repos/{}", self.repo))
+                .send()?,
             "repository access",
         )?;
         let repository: RepositoryResponse = response.json()?;
@@ -139,7 +155,11 @@ impl GithubClient {
             bail!("the fork must be public for the zero-server dashboard. Device snapshots are AES-GCM encrypted before upload")
         }
         if !repo_is_upstream_fork(&repository) {
-            bail!("{} is not a fork of {}; use the project fork itself as the ledger repository", repository.full_name, UPSTREAM_REPO)
+            bail!(
+                "{} is not a fork of {}; use the project fork itself as the ledger repository",
+                repository.full_name,
+                UPSTREAM_REPO
+            )
         }
         Ok(())
     }
@@ -148,58 +168,118 @@ impl GithubClient {
         format!("tm-ledger-{}", device_hash(device_id))
     }
 
-    pub fn replace_snapshot(&self, device_id: &str, envelope: &EncryptedLedger) -> Result<String> {
-        let branch = Self::snapshot_branch(device_id);
-        let serialized = serde_json::to_string(envelope)?;
+    fn replace_root_snapshot(
+        &self,
+        branch: &str,
+        path: &str,
+        serialized: String,
+        message: String,
+    ) -> Result<()> {
         let blob: ShaResponse = checked(
-            self.request(reqwest::Method::POST, format!("{API}/repos/{}/git/blobs", self.repo))
-                .json(&json!({ "content": serialized, "encoding": "utf-8" }))
-                .send()?,
+            self.request(
+                reqwest::Method::POST,
+                format!("{API}/repos/{}/git/blobs", self.repo),
+            )
+            .json(&json!({ "content": serialized, "encoding": "utf-8" }))
+            .send()?,
             "blob creation",
-        )?.json()?;
+        )?
+        .json()?;
         let tree: ShaResponse = checked(
-            self.request(reqwest::Method::POST, format!("{API}/repos/{}/git/trees", self.repo))
-                .json(&json!({ "tree": [{ "path": "ledger.json", "mode": "100644", "type": "blob", "sha": blob.sha }] }))
-                .send()?,
+            self.request(
+                reqwest::Method::POST,
+                format!("{API}/repos/{}/git/trees", self.repo),
+            )
+            .json(&json!({
+                "tree": [{ "path": path, "mode": "100644", "type": "blob", "sha": blob.sha }]
+            }))
+            .send()?,
             "tree creation",
-        )?.json()?;
+        )?
+        .json()?;
         let commit: ShaResponse = checked(
-            self.request(reqwest::Method::POST, format!("{API}/repos/{}/git/commits", self.repo))
-                .json(&json!({ "message": format!("token-monitor snapshot {}", envelope.device_hash), "tree": tree.sha, "parents": [] }))
-                .send()?,
+            self.request(
+                reqwest::Method::POST,
+                format!("{API}/repos/{}/git/commits", self.repo),
+            )
+            .json(&json!({ "message": message, "tree": tree.sha, "parents": [] }))
+            .send()?,
             "snapshot commit creation",
-        )?.json()?;
+        )?
+        .json()?;
 
         let ref_url = format!("{API}/repos/{}/git/ref/heads/{branch}", self.repo);
         let ref_response = self.request(reqwest::Method::GET, ref_url).send()?;
         if ref_response.status() == reqwest::StatusCode::NOT_FOUND {
             checked(
-                self.request(reqwest::Method::POST, format!("{API}/repos/{}/git/refs", self.repo))
-                    .json(&json!({ "ref": format!("refs/heads/{branch}"), "sha": commit.sha }))
-                    .send()?,
+                self.request(
+                    reqwest::Method::POST,
+                    format!("{API}/repos/{}/git/refs", self.repo),
+                )
+                .json(&json!({
+                    "ref": format!("refs/heads/{branch}"),
+                    "sha": commit.sha
+                }))
+                .send()?,
                 "snapshot branch creation",
             )?;
         } else {
             let current: RefResponse = checked(ref_response, "snapshot branch read")?.json()?;
             if current.object.sha != commit.sha {
                 checked(
-                    self.request(reqwest::Method::PATCH, format!("{API}/repos/{}/git/refs/heads/{branch}", self.repo))
-                        .json(&json!({ "sha": commit.sha, "force": true }))
-                        .send()?,
+                    self.request(
+                        reqwest::Method::PATCH,
+                        format!("{API}/repos/{}/git/refs/heads/{branch}", self.repo),
+                    )
+                    .json(&json!({ "sha": commit.sha, "force": true }))
+                    .send()?,
                     "snapshot branch update",
                 )?;
             }
         }
+        Ok(())
+    }
+
+    pub fn replace_snapshot(
+        &self,
+        device_id: &str,
+        envelope: &EncryptedLedger,
+    ) -> Result<String> {
+        let branch = Self::snapshot_branch(device_id);
+        self.replace_root_snapshot(
+            &branch,
+            "ledger.json",
+            serde_json::to_string(envelope)?,
+            format!("token-monitor snapshot {}", envelope.device_hash),
+        )?;
         Ok(branch)
+    }
+
+    pub fn replace_dashboard_access(
+        &self,
+        envelope: &DashboardAccessEnvelope,
+    ) -> Result<String> {
+        self.replace_root_snapshot(
+            DASHBOARD_BRANCH,
+            "access.json",
+            serde_json::to_string(envelope)?,
+            "token-monitor dashboard access".to_string(),
+        )?;
+        Ok(DASHBOARD_BRANCH.to_string())
     }
 
     pub fn remove_snapshot_branch(&self, device_id: &str) -> Result<()> {
         let branch = Self::snapshot_branch(device_id);
-        let response = self.request(
-            reqwest::Method::DELETE,
-            format!("{API}/repos/{}/git/refs/heads/{branch}", self.repo),
-        ).send().context("failed to contact GitHub")?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND { return Ok(()); }
+        let response = self
+            .request(
+                reqwest::Method::DELETE,
+                format!("{API}/repos/{}/git/refs/heads/{branch}", self.repo),
+            )
+            .send()
+            .context("failed to contact GitHub")?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
         checked(response, "snapshot branch deletion")?;
         Ok(())
     }
@@ -215,8 +295,16 @@ mod tests {
             private: false,
             full_name: "alice/token-monitor".into(),
             fork: true,
-            parent: Some(ParentResponse { full_name: UPSTREAM_REPO.into() }),
+            parent: Some(ParentResponse {
+                full_name: UPSTREAM_REPO.into(),
+            }),
         };
         assert!(repo_is_upstream_fork(&repository));
+    }
+
+    #[test]
+    fn dashboard_branch_is_separate_from_device_ledgers() {
+        assert_eq!(DASHBOARD_BRANCH, "tm-dashboard");
+        assert_ne!(DASHBOARD_BRANCH, GithubClient::snapshot_branch("device"));
     }
 }

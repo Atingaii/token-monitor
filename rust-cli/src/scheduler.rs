@@ -13,46 +13,87 @@ fn executable() -> Result<PathBuf> {
 
 pub fn install(interval_minutes: u32) -> Result<String> {
     #[cfg(target_os = "windows")]
-    { return install_windows(interval_minutes); }
+    {
+        return install_windows(interval_minutes);
+    }
     #[cfg(target_os = "macos")]
-    { return install_macos(interval_minutes); }
+    {
+        return install_macos(interval_minutes);
+    }
     #[cfg(target_os = "linux")]
-    { return install_linux(interval_minutes); }
+    {
+        return install_linux(interval_minutes);
+    }
     #[allow(unreachable_code)]
     bail!("automatic scheduling is not supported on this platform")
 }
 
 pub fn uninstall() -> Result<()> {
     #[cfg(target_os = "windows")]
-    { return uninstall_windows(); }
+    {
+        return uninstall_windows();
+    }
     #[cfg(target_os = "macos")]
-    { return uninstall_macos(); }
+    {
+        return uninstall_macos();
+    }
     #[cfg(target_os = "linux")]
-    { return uninstall_linux(); }
+    {
+        return uninstall_linux();
+    }
     #[allow(unreachable_code)]
     Ok(())
 }
 
 fn run_ok(mut command: Command, description: &str) -> Result<()> {
-    let output = command.output().with_context(|| format!("failed to run {description}"))?;
-    if output.status.success() { return Ok(()); }
-    bail!("{description} failed: {}", String::from_utf8_lossy(&output.stderr).trim())
+    let output = command
+        .output()
+        .with_context(|| format!("failed to run {description}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if stderr.is_empty() { stdout } else { stderr };
+    bail!("{description} failed: {detail}")
+}
+
+#[cfg(target_os = "windows")]
+fn windows_task_action(exe: &Path) -> String {
+    // `/TR` is one argument to schtasks. Quote the executable itself so installs
+    // under a username/path containing spaces remain valid.
+    format!("\"{}\" sync --quiet", exe.display())
 }
 
 #[cfg(target_os = "windows")]
 fn install_windows(interval_minutes: u32) -> Result<String> {
     let exe = executable()?;
-    let task = format!("\"{}\" sync --quiet", exe.display());
+    let task = windows_task_action(&exe);
+    let interval = interval_minutes.clamp(5, 1440).to_string();
     let mut cmd = Command::new("schtasks.exe");
     cmd.args([
-        "/Create", "/F", "/SC", "MINUTE", "/MO", &interval_minutes.to_string(),
-        "/TN", TASK_NAME, "/TR", &task,
+        "/Create",
+        "/F",
+        "/SC",
+        "MINUTE",
+        "/MO",
+        &interval,
+        "/TN",
+        TASK_NAME,
+        "/TR",
+        &task,
     ]);
     run_ok(cmd, "Windows Task Scheduler registration")?;
+
+    // Trigger once after registration. This is best-effort because Windows can
+    // transiently report the task as not ready immediately after creation.
     let mut run = Command::new("schtasks.exe");
     run.args(["/Run", "/TN", TASK_NAME]);
     let _ = run.output();
-    Ok(format!("Windows Task Scheduler every {interval_minutes} minutes"))
+    Ok(format!(
+        "Windows Task Scheduler every {} minutes",
+        interval_minutes.clamp(5, 1440)
+    ))
 }
 
 #[cfg(target_os = "windows")]
@@ -65,20 +106,27 @@ fn uninstall_windows() -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn launch_agent_path() -> Result<PathBuf> {
-    Ok(dirs::home_dir().context("cannot determine home directory")?
+    Ok(dirs::home_dir()
+        .context("cannot determine home directory")?
         .join("Library/LaunchAgents/io.atingaii.token-monitor.plist"))
 }
 
 #[cfg(target_os = "macos")]
 fn xml_escape(value: &str) -> String {
-    value.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
-        .replace('"', "&quot;").replace('\'', "&apos;")
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 #[cfg(target_os = "macos")]
 fn mac_uid() -> Result<String> {
     let output = Command::new("id").arg("-u").output()?;
-    if !output.status.success() { bail!("cannot determine macOS uid"); }
+    if !output.status.success() {
+        bail!("cannot determine macOS uid");
+    }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
@@ -86,8 +134,11 @@ fn mac_uid() -> Result<String> {
 fn install_macos(interval_minutes: u32) -> Result<String> {
     let exe = executable()?;
     let path = launch_agent_path()?;
-    if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
-    let plist = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>io.atingaii.token-monitor</string>
@@ -97,7 +148,10 @@ fn install_macos(interval_minutes: u32) -> Result<String> {
 <key>ProcessType</key><string>Background</string>
 <key>LowPriorityIO</key><true/>
 </dict></plist>
-"#, xml_escape(&exe.to_string_lossy()), interval_minutes * 60);
+"#,
+        xml_escape(&exe.to_string_lossy()),
+        interval_minutes.clamp(5, 1440) * 60
+    );
     fs::write(&path, plist)?;
     let domain = format!("gui/{}", mac_uid()?);
     let mut bootout = Command::new("launchctl");
@@ -106,7 +160,10 @@ fn install_macos(interval_minutes: u32) -> Result<String> {
     let mut bootstrap = Command::new("launchctl");
     bootstrap.args(["bootstrap", &domain, path.to_string_lossy().as_ref()]);
     run_ok(bootstrap, "macOS launchd registration")?;
-    Ok(format!("macOS launchd every {interval_minutes} minutes"))
+    Ok(format!(
+        "macOS launchd every {} minutes",
+        interval_minutes.clamp(5, 1440)
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -122,17 +179,20 @@ fn uninstall_macos() -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn systemd_dir() -> Result<PathBuf> {
-    Ok(dirs::config_dir().context("cannot determine config directory")?.join("systemd/user"))
+    Ok(dirs::config_dir()
+        .context("cannot determine config directory")?
+        .join("systemd/user"))
 }
 
 #[cfg(target_os = "linux")]
-fn systemd_escape(path: &Path) -> String {
-    let raw = path.to_string_lossy();
-    if raw.contains(' ') || raw.contains('\t') {
-        format!("\"{}\"", raw.replace('"', "\\\""))
-    } else {
-        raw.to_string()
-    }
+fn systemd_exec_path(path: &Path) -> String {
+    // systemd treats '%' as a specifier even inside quotes, so double it.
+    let escaped = path
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('%', "%%");
+    format!("\"{escaped}\"")
 }
 
 #[cfg(target_os = "linux")]
@@ -142,11 +202,11 @@ fn try_install_systemd(interval_minutes: u32) -> Result<String> {
     fs::create_dir_all(&dir)?;
     let service = format!(
         "[Unit]\nDescription=Token Monitor usage snapshot\n\n[Service]\nType=oneshot\nExecStart={} sync --quiet\nNice=10\nIOSchedulingClass=idle\n",
-        systemd_escape(&exe)
+        systemd_exec_path(&exe)
     );
     let timer = format!(
         "[Unit]\nDescription=Periodic Token Monitor usage snapshot\n\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec={}min\nRandomizedDelaySec=45\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n",
-        interval_minutes
+        interval_minutes.clamp(5, 1440)
     );
     fs::write(dir.join("token-monitor.service"), service)?;
     fs::write(dir.join("token-monitor.timer"), timer)?;
@@ -157,7 +217,10 @@ fn try_install_systemd(interval_minutes: u32) -> Result<String> {
     let mut enable = Command::new("systemctl");
     enable.args(["--user", "enable", "--now", "token-monitor.timer"]);
     run_ok(enable, "systemd user timer registration")?;
-    Ok(format!("systemd user timer every {interval_minutes} minutes"))
+    Ok(format!(
+        "systemd user timer every {} minutes",
+        interval_minutes.clamp(5, 1440)
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -165,34 +228,58 @@ fn cron_cadence(interval_minutes: u32) -> (&'static str, u32) {
     match interval_minutes {
         5..=59 => ("minutes", interval_minutes),
         60 => ("hour", 1),
-        value if value >= 120 && value % 60 == 0 && value / 60 <= 23 => ("hours", value / 60),
+        value if value >= 120 && value % 60 == 0 && value / 60 <= 23 => {
+            ("hours", value / 60)
+        }
         1440 => ("day", 1),
         _ => ("minutes", 15),
     }
 }
 
 #[cfg(target_os = "linux")]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(target_os = "linux")]
 fn install_cron(interval_minutes: u32) -> Result<String> {
+    if Command::new("crontab").arg("-l").output().is_err() {
+        bail!("neither a usable systemd --user session nor the `crontab` command is available; run `token-monitor sync` manually or install a user cron implementation")
+    }
+
     let exe = executable()?;
-    let existing = Command::new("crontab").arg("-l").output().ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+    let existing = Command::new("crontab")
+        .arg("-l")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
         .unwrap_or_default();
     let marker = "# token-monitor-usage-sync";
-    let mut lines: Vec<String> = existing.lines()
+    let mut lines: Vec<String> = existing
+        .lines()
         .filter(|line| !line.contains(marker))
         .map(str::to_string)
         .collect();
 
     let (kind, amount) = cron_cadence(interval_minutes);
     let (expression, actual_description) = match kind {
-        "minutes" => (format!("*/{amount} * * * *"), format!("every {amount} minutes")),
+        "minutes" => (
+            format!("*/{amount} * * * *"),
+            format!("every {amount} minutes"),
+        ),
         "hour" => ("0 * * * *".to_string(), "every hour".to_string()),
-        "hours" => (format!("0 */{amount} * * *"), format!("every {amount} hours")),
+        "hours" => (
+            format!("0 */{amount} * * *"),
+            format!("every {amount} hours"),
+        ),
         "day" => ("0 0 * * *".to_string(), "daily".to_string()),
         _ => unreachable!(),
     };
-    lines.push(format!("{expression} \"{}\" sync --quiet {marker}", exe.display()));
+    lines.push(format!(
+        "{expression} {} sync --quiet {marker}",
+        shell_single_quote(&exe.to_string_lossy())
+    ));
 
     let mut child = Command::new("crontab")
         .arg("-")
@@ -200,8 +287,14 @@ fn install_cron(interval_minutes: u32) -> Result<String> {
         .spawn()
         .context("failed to start crontab")?;
     use std::io::Write;
-    child.stdin.as_mut().unwrap().write_all(format!("{}\n", lines.join("\n")).as_bytes())?;
-    if !child.wait()?.success() { bail!("crontab registration failed"); }
+    child
+        .stdin
+        .as_mut()
+        .context("crontab stdin unavailable")?
+        .write_all(format!("{}\n", lines.join("\n")).as_bytes())?;
+    if !child.wait()?.success() {
+        bail!("crontab registration failed");
+    }
     Ok(format!("cron {actual_description}"))
 }
 
@@ -217,7 +310,9 @@ fn install_linux(interval_minutes: u32) -> Result<String> {
                     let _ = fs::remove_file(dir.join("token-monitor.service"));
                 }
                 return install_cron(interval_minutes).with_context(|| {
-                    format!("systemd user timer unavailable ({systemd_error}); cron fallback also failed")
+                    format!(
+                        "systemd user timer unavailable ({systemd_error}); cron fallback also failed"
+                    )
                 });
             }
         }
@@ -235,26 +330,36 @@ fn uninstall_linux() -> Result<()> {
         let _ = fs::remove_file(dir.join("token-monitor.service"));
     }
 
-    let existing = Command::new("crontab").arg("-l").output().ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+    let existing = Command::new("crontab")
+        .arg("-l")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
         .unwrap_or_default();
     if !existing.is_empty() {
-        let cleaned = existing.lines()
+        let cleaned = existing
+            .lines()
             .filter(|line| !line.contains("# token-monitor-usage-sync"))
             .collect::<Vec<_>>()
             .join("\n");
-        let mut child = Command::new("crontab").arg("-")
-            .stdin(std::process::Stdio::piped()).spawn()?;
-        use std::io::Write;
-        child.stdin.as_mut().unwrap().write_all(format!("{cleaned}\n").as_bytes())?;
-        let _ = child.wait();
+        if let Ok(mut child) = Command::new("crontab")
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+        {
+            use std::io::Write;
+            if let Some(stdin) = child.stdin.as_mut() {
+                let _ = stdin.write_all(format!("{cleaned}\n").as_bytes());
+            }
+            let _ = child.wait();
+        }
     }
     Ok(())
 }
 
 #[cfg(all(test, target_os = "linux"))]
-mod tests {
+mod linux_tests {
     use super::*;
 
     #[test]
@@ -264,5 +369,31 @@ mod tests {
         assert_eq!(cron_cadence(120), ("hours", 2));
         assert_eq!(cron_cadence(1440), ("day", 1));
         assert_eq!(cron_cadence(90), ("minutes", 15));
+    }
+
+    #[test]
+    fn cron_shell_quote_handles_spaces_and_apostrophes() {
+        assert_eq!(shell_single_quote("/home/a b/tm"), "'/home/a b/tm'");
+        assert_eq!(shell_single_quote("/home/o'b/tm"), "'/home/o'\"'\"'b/tm'");
+    }
+
+    #[test]
+    fn systemd_path_escapes_percent_and_spaces() {
+        let rendered = systemd_exec_path(Path::new("/home/a b/100%/token-monitor"));
+        assert_eq!(rendered, "\"/home/a b/100%%/token-monitor\"");
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn task_action_quotes_executable_with_spaces() {
+        let action = windows_task_action(Path::new(r"C:\Users\Test User\TokenMonitor\token-monitor.exe"));
+        assert_eq!(
+            action,
+            r#""C:\Users\Test User\TokenMonitor\token-monitor.exe" sync --quiet"#
+        );
     }
 }
