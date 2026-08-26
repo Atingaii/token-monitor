@@ -112,7 +112,7 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
             explicit_provider,
             session_evidence.and_then(|e| e.route_hint.as_ref()),
         );
-        let tier = session_evidence.and_then(|e| e.tier.clone());
+        let tier = evidence::tier_for_message(&evidence, &client, &msg.session_id, &msg.date);
         let key = RowKey {
             date: msg.date.clone(),
             client,
@@ -171,6 +171,7 @@ pub fn merge_incremental(mut previous: Ledger, partial: Ledger, since: &str) -> 
             .then_with(|| a.client.cmp(&b.client))
             .then_with(|| a.route_provider.cmp(&b.route_provider))
             .then_with(|| a.model.cmp(&b.model))
+            .then_with(|| a.tier.cmp(&b.tier))
     });
     previous.generated_at = partial.generated_at;
     previous.device = partial.device;
