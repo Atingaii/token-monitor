@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::crypto::generate_key;
 use crate::model::CURRENT_LEDGER_SCHEMA_VERSION;
 
-pub const DASHBOARD_ORIGIN: &str = "https://atingaii.github.io/token-monitor/";
+pub const DASHBOARD_ORIGIN: &str = "https://token-monitor-cuidongshan350-1312.vercel.app/";
+pub const DEFAULT_DASHBOARD_REPO: &str = "Atingaii/token-monitor";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -144,11 +145,16 @@ pub fn join_code(config: &Config) -> Result<String> {
     })?))
 }
 
-/// Stable, shareable URL. The random encryption key is never placed in the URL
-/// in v1.1; the static page retrieves `tm-dashboard/access.json` and unwraps the
-/// same workspace key locally after the user enters their dashboard password.
+/// Stable, shareable URL. The random encryption key is never placed in the URL.
+/// The project's own production workspace gets the shortest possible URL;
+/// other forks keep an explicit repo query parameter so the same dashboard can
+/// still serve them without a second deployment.
 pub fn dashboard_url(config: &Config) -> String {
-    format!("{}?repo={}", DASHBOARD_ORIGIN, config.repo)
+    if config.repo.eq_ignore_ascii_case(DEFAULT_DASHBOARD_REPO) {
+        DASHBOARD_ORIGIN.to_string()
+    } else {
+        format!("{}?repo={}", DASHBOARD_ORIGIN, config.repo)
+    }
 }
 
 pub fn load() -> Result<Config> {
@@ -249,9 +255,24 @@ mod tests {
     fn dashboard_url_never_exposes_workspace_key() {
         let config = new_config("owner/repo", "t".into(), Some("x".into()), 15).unwrap();
         let url = dashboard_url(&config);
-        assert_eq!(url, "https://atingaii.github.io/token-monitor/?repo=owner/repo");
+        assert_eq!(
+            url,
+            "https://token-monitor-cuidongshan350-1312.vercel.app/?repo=owner/repo"
+        );
         assert!(!url.contains(&config.dashboard_key));
         assert!(!url.contains("#key="));
+    }
+
+    #[test]
+    fn primary_workspace_uses_short_dashboard_url() {
+        let config = new_config(
+            "Atingaii/token-monitor",
+            "t".into(),
+            Some("x".into()),
+            15,
+        )
+        .unwrap();
+        assert_eq!(dashboard_url(&config), DASHBOARD_ORIGIN);
     }
 
     #[test]
