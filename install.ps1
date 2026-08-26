@@ -1,10 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-$Base = if ($env:TOKEN_MONITOR_RELEASE_BASE) { $env:TOKEN_MONITOR_RELEASE_BASE.TrimEnd('/') } else { 'https://token-monitor-v110-dist2-cuidongshan350-1312.vercel.app' }
+$Base = if ($env:TOKEN_MONITOR_RELEASE_BASE) { $env:TOKEN_MONITOR_RELEASE_BASE.TrimEnd('/') } else { 'https://token-monitor-v110-final-cuidongshan350-1312.vercel.app' }
 
-# Windows PowerShell 5.1 can otherwise negotiate an obsolete TLS protocol on
-# older machines/profiles when downloading from HTTPS endpoints.
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
   try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -12,9 +10,6 @@ if ($PSVersionTable.PSEdition -eq 'Desktop') {
 }
 
 function Get-TokenMonitorArchitecture {
-  # PROCESSOR_ARCHITEW6432 exposes the native OS architecture when a 32-bit
-  # PowerShell process runs on 64-bit Windows. This path works on Windows
-  # PowerShell 5.1 and does not depend on RuntimeInformation.OSArchitecture.
   $raw = $env:PROCESSOR_ARCHITEW6432
   if ([string]::IsNullOrWhiteSpace($raw)) { $raw = $env:PROCESSOR_ARCHITECTURE }
   if (-not [string]::IsNullOrWhiteSpace($raw)) {
@@ -27,8 +22,6 @@ function Get-TokenMonitorArchitecture {
       }
     }
   }
-
-  # Last-resort compatibility fallback for constrained PowerShell hosts.
   if ([Environment]::Is64BitOperatingSystem) { return 'x64' }
   return 'x86'
 }
@@ -78,7 +71,6 @@ try {
   $Binary = Join-Path $InstallDir 'token-monitor.exe'
   Copy-Item -Force (Join-Path $Temp 'token-monitor.exe') $Binary
 
-  # Validate the native executable before mutating PATH.
   & $Binary --version
   if ($LASTEXITCODE -ne 0) { throw "Downloaded token-monitor.exe failed to run (exit $LASTEXITCODE)" }
 
