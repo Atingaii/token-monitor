@@ -157,3 +157,60 @@ impl PublicLedger {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_ledger_strips_local_device_identity_but_keeps_aggregates() {
+        let metrics = Metrics {
+            input: 10,
+            output: 3,
+            cache_read: 90,
+            cache_write: 0,
+            reasoning: 2,
+            messages: 1,
+            cost_usd: 0.25,
+            plan_cost_usd: 0.40,
+        };
+        let ledger = Ledger {
+            schema_version: 4,
+            generated_at: "2026-08-26T00:00:00Z".into(),
+            device: DeviceInfo {
+                id: "raw-secret-device-id".into(),
+                name: "Lucent Personal Mac".into(),
+                platform: "macos".into(),
+                arch: "aarch64".into(),
+                hostname: "private-host.local".into(),
+                app_version: "1.0.1".into(),
+            },
+            rows: vec![UsageRow {
+                date: "2026-08-26".into(),
+                client: "codex".into(),
+                provider: "openai".into(),
+                upstream_vendor: "openai".into(),
+                route_provider: "openai".into(),
+                route_type: "official".into(),
+                model: "gpt-5.6-sol".into(),
+                tier: Some("fast".into()),
+                cost_lower_bound: false,
+                plan_cost_available: true,
+                metrics: metrics.clone(),
+            }],
+            totals: metrics,
+            scan_ms: 12,
+        };
+
+        let public = PublicLedger::from_ledger(&ledger, "5e4056ad24282d75");
+        let json = serde_json::to_string(&public).unwrap();
+        assert_eq!(public.device.id, "5e4056ad24282d75");
+        assert_eq!(public.device.name, "macos-5e4056");
+        assert_eq!(public.rows[0].model, "gpt-5.6-sol");
+        assert_eq!(public.totals.total_tokens(), 105);
+        assert!(!json.contains("raw-secret-device-id"));
+        assert!(!json.contains("Lucent Personal Mac"));
+        assert!(!json.contains("private-host.local"));
+        assert!(!json.contains("hostname"));
+    }
+}
