@@ -35,14 +35,19 @@ jobs:
             exit 1
           }
       - name: Unit tests
-        run: cargo test --manifest-path rust-cli/Cargo.toml --all-targets
+        run: cargo test --workspace --all-targets
       - name: Release build smoke test
-        run: cargo build --release --manifest-path rust-cli/Cargo.toml
+        run: cargo build --release --workspace
       - name: CLI surface smoke test
         shell: bash
         run: |
-          ./rust-cli/target/release/token-monitor --version || ./rust-cli/target/release/token-monitor.exe --version
-          ./rust-cli/target/release/token-monitor clients || ./rust-cli/target/release/token-monitor.exe clients
+          if [ -x ./target/release/token-monitor ]; then
+            ./target/release/token-monitor --version
+            ./target/release/token-monitor clients
+          else
+            ./target/release/token-monitor.exe --version
+            ./target/release/token-monitor.exe clients
+          fi
 
   rust-quality:
     runs-on: ubuntu-latest
@@ -51,7 +56,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy --manifest-path rust-cli/Cargo.toml --all-targets
+      - run: cargo clippy --workspace --all-targets
 
   dashboard:
     runs-on: ubuntu-latest
