@@ -331,15 +331,37 @@ pub fn merge_incremental(mut previous: Ledger, partial: Ledger, since: &str) -> 
 }
 
 /// Used by the one-shot scheduler to avoid a GitHub write when the accounting
-/// snapshot did not change. Volatile scan timestamps/version metadata do not
-/// participate in this comparison.
+/// snapshot did not change. Volatile scan timestamps and scan duration do not
+/// participate, but schema/device identity must match so migrations and re-setup
+/// always get a first remote snapshot.
 pub fn same_accounting(left: &Ledger, right: &Ledger) -> bool {
-    left.rows == right.rows && left.totals == right.totals
+    left.schema_version == right.schema_version
+        && left.device.id == right.device.id
+        && left.rows == right.rows
+        && left.totals == right.totals
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn empty_ledger(schema_version: u32, device_id: &str) -> Ledger {
+        Ledger {
+            schema_version,
+            generated_at: "2026-08-26T00:00:00Z".to_string(),
+            device: DeviceInfo {
+                id: device_id.to_string(),
+                name: "test-device".to_string(),
+                platform: "linux".to_string(),
+                arch: "x86_64".to_string(),
+                hostname: "test-host".to_string(),
+                app_version: "1.0.0".to_string(),
+            },
+            rows: Vec::new(),
+            totals: Metrics::default(),
+            scan_ms: 1,
+        }
+    }
 
     #[test]
     fn every_tokscale_client_is_exposed() {
@@ -383,5 +405,22 @@ mod tests {
             )]),
         };
         assert!(!reconciled_codex_days(&canonical, &mismatch).contains("2026-08-26"));
+    }
+
+    #[test]
+    fn unchanged_snapshot_requires_same_schema_and_device() {
+        let baseline = empty_ledger(3, "device-a");
+        let mut volatile_only = baseline.clone();
+        volatile_only.generated_at = "2026-08-26T00:15:00Z".to_string();
+        volatile_only.scan_ms = 999;
+        assert!(same_accounting(&baseline, &volatile_only));
+
+        let mut schema_migration = baseline.clone();
+        schema_migration.schema_version = 4;
+        assert!(!same_accounting(&baseline, &schema_migration));
+
+        let mut replacement_device = baseline.clone();
+        replacement_device.device.id = "device-b".to_string();
+        assert!(!same_accounting(&baseline, &replacement_device));
     }
 }
