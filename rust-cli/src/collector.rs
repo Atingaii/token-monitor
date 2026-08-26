@@ -39,7 +39,13 @@ fn message_cost(msg: &tokscale_core::ParsedMessage, pricing: Option<&PricingServ
     pricing.calculate_cost_with_provider(
         &msg.model_id,
         Some(&msg.provider_id),
-        &TokenBreakdown { input: msg.input, output: msg.output, cache_read: msg.cache_read, cache_write: msg.cache_write, reasoning: msg.reasoning },
+        &TokenBreakdown {
+            input: msg.input,
+            output: msg.output,
+            cache_read: msg.cache_read,
+            cache_write: msg.cache_write,
+            reasoning: msg.reasoning,
+        },
     )
 }
 
@@ -53,6 +59,16 @@ fn load_scanner_settings() -> ScannerSettings {
     let Ok(data) = std::fs::read(config_dir.join("tokscale/settings.json")) else { return ScannerSettings::default(); };
     let Ok(value) = serde_json::from_slice::<serde_json::Value>(&data) else { return ScannerSettings::default(); };
     value.get("scanner").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
+}
+
+/// Some Tokscale clients preserve a provider identifier directly from their
+/// source record. Only mark the ones whose upstream parser contract proves this.
+/// Other clients stay conservative unless our evidence scanner confirms the
+/// provider from the raw session/config.
+fn parser_provider_is_explicit(client: &str, raw_provider: &str) -> bool {
+    !raw_provider.trim().is_empty()
+        && raw_provider != "unknown"
+        && matches!(client, "opencode" | "micode")
 }
 
 pub fn supported_clients() -> Vec<String> {
@@ -88,10 +104,12 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
         let raw_provider = session_evidence
             .and_then(|e| e.explicit_provider.as_deref())
             .unwrap_or_else(|| msg.provider_id.as_str());
+        let explicit_provider = session_evidence.and_then(|e| e.explicit_provider.as_ref()).is_some()
+            || parser_provider_is_explicit(&client, raw_provider);
         let identity = provider::classify(
             Some(raw_provider),
             &model,
-            session_evidence.and_then(|e| e.explicit_provider.as_ref()).is_some(),
+            explicit_provider,
             session_evidence.and_then(|e| e.route_hint.as_ref()),
         );
         let tier = session_evidence.and_then(|e| e.tier.clone());
@@ -174,5 +192,14 @@ mod tests {
         assert!(clients.contains(&"opencode".to_string()));
         assert!(clients.contains(&"gemini".to_string()));
         assert!(clients.len() >= 20, "expected broad Tokscale client coverage, got {}", clients.len());
+    }
+
+    #[test]
+    fn only_proven_schema_providers_are_marked_explicit() {
+        assert!(parser_provider_is_explicit("opencode", "openrouter"));
+        assert!(parser_provider_is_explicit("micode", "openai"));
+        assert!(!parser_provider_is_explicit("kimi", "moonshot"));
+        assert!(!parser_provider_is_explicit("gemini", "google"));
+        assert!(!parser_provider_is_explicit("opencode", "unknown"));
     }
 }
