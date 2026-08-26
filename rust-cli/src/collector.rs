@@ -30,12 +30,10 @@ struct RowKey {
 struct RowAccumulator {
     metrics: Metrics,
     cost_lower_bound: bool,
+    plan_cost_available: bool,
 }
 
 fn load_pricing() -> Option<Arc<PricingService>> {
-    // Same fallback posture used by Tokscale's local reports: prefer an existing
-    // cache for offline operation, otherwise initialize the canonical pricing
-    // service. Token Monitor owns no general-purpose model price table.
     if let Some(cached) = PricingService::load_cached_any_age() {
         return Some(Arc::new(cached));
     }
@@ -56,10 +54,8 @@ fn usage_from_message(message: &ParsedMessage) -> TokenBreakdown {
     }
 }
 
-/// Delegate both price arithmetic and coverage semantics to Tokscale. When a
-/// price source is absent or does not cover the observed token buckets, the
-/// numeric result is retained only as a lower bound rather than presented as an
-/// exact zero/partial cost.
+/// General price arithmetic and coverage semantics remain delegated to Tokscale.
+/// The separate plan estimate is never synthesized here.
 fn price_usage(
     model_id: &str,
     provider_id: Option<&str>,
@@ -86,8 +82,6 @@ fn normalize_text(value: &str, fallback: &str) -> String {
 }
 
 fn load_scanner_settings() -> ScannerSettings {
-    // Reuse Tokscale's persisted scanner schema when present. The file is
-    // optional; ScannerSettings::default is the upstream-compatible baseline.
     let Some(config_dir) = dirs::config_dir() else {
         return ScannerSettings::default();
     };
@@ -104,9 +98,6 @@ fn load_scanner_settings() -> ScannerSettings {
         .unwrap_or_default()
 }
 
-/// Only claim parser-level provider evidence for clients whose Tokscale source
-/// schema explicitly carries provider identity. Other clients remain unknown
-/// unless the route-evidence adapter can prove it independently.
 fn parser_provider_is_explicit(client: &str, raw_provider: &str) -> bool {
     !raw_provider.trim().is_empty()
         && raw_provider != "unknown"
@@ -117,8 +108,6 @@ fn metrics_from_message(
     message: &ParsedMessage,
     pricing: Option<&PricingService>,
 ) -> (Metrics, bool) {
-    // ParsedMessage already contains Tokscale's normalized buckets. Do not
-    // reinterpret raw client token fields here.
     let usage = usage_from_message(message);
     let (cost_usd, cost_lower_bound) = price_usage(
         &message.model_id,
@@ -135,6 +124,7 @@ fn metrics_from_message(
             reasoning: message.reasoning.max(0),
             messages: message.message_count.max(0),
             cost_usd,
+            plan_cost_usd: 0.0,
         },
         cost_lower_bound,
     )
@@ -145,12 +135,12 @@ fn add_grouped(
     key: RowKey,
     metrics: Metrics,
     cost_lower_bound: bool,
+    plan_cost_available: bool,
 ) {
-    // This is a direct analogue of Tokscale's DayAccumulator merge: additive
-    // token/message buckets use saturating arithmetic; cost is summed.
     let entry = grouped.entry(key).or_default();
     entry.metrics.add(&metrics);
     entry.cost_lower_bound |= cost_lower_bound;
+    entry.plan_cost_available |= plan_cost_available;
 }
 
 fn route_for_message(
@@ -176,21 +166,28 @@ fn route_for_message(
     (normalize_text(raw_provider, "unknown"), identity)
 }
 
-fn canonical_codex_days(messages: &[ParsedMessage]) -> HashMap<String, codex_tier::DayReconciliation> {
-    let mut days: HashMap<String, codex_tier::DayReconciliation> = HashMap::new();
+fn canonical_codex_days(
+    messages: &[ParsedMessage],
+) -> HashMap<String, codex_tier::DayReconciliation> {
+    let mut days = HashMap::new();
     for message in messages.iter().filter(|message| message.client == "codex") {
         let (metrics, _) = metrics_from_message(message, None);
-        let day = days.entry(message.date.clone()).or_insert_with(|| codex_tier::DayReconciliation {
-            tokens: 0,
-            messages: 0,
-            all_priced: true,
-        });
+        let day = days
+            .entry(message.date.clone())
+            .or_insert_with(|| codex_tier::DayReconciliation {
+                tokens: 0,
+                messages: 0,
+                all_priced: true,
+            });
         day.tokens = day.tokens.saturating_add(metrics.total_tokens());
         day.messages = day.messages.saturating_add(metrics.messages);
     }
     days
 }
 
+/// Tier subdivision is accepted only when additive token and message totals
+/// exactly reconcile with Tokscale. Price completeness is not an acceptance
+/// condition; incomplete price evidence remains an explicit lower bound.
 fn reconciled_codex_days(
     canonical: &HashMap<String, codex_tier::DayReconciliation>,
     enhanced: &codex_tier::EnhancementResult,
@@ -200,9 +197,7 @@ fn reconciled_codex_days(
         .iter()
         .filter_map(|(date, candidate)| {
             let upstream = canonical.get(date)?;
-            (candidate.all_priced
-                && candidate.tokens == upstream.tokens
-                && candidate.messages == upstream.messages)
+            (candidate.tokens == upstream.tokens && candidate.messages == upstream.messages)
                 .then(|| date.clone())
         })
         .collect()
@@ -221,9 +216,6 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
     let incremental = since.is_some();
     let scanner_settings = load_scanner_settings();
 
-    // This is the single canonical accounting pass. Tokscale owns client
-    // discovery, parsing, source caching/dedup, model attribution and token-bucket
-    // normalization for every supported client.
     let parsed = parse_local_clients(LocalParseOptions {
         home_dir: None,
         use_env_roots: true,
@@ -238,14 +230,10 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
 
     let route_evidence = evidence::scan(incremental);
     let pricing = load_pricing();
-
-    // Optional Codex tier detail never becomes authoritative by itself. Its
-    // daily totals must reconcile exactly with the Tokscale result before those
-    // rows are allowed to replace the canonical Codex rows for that day.
     let canonical_codex = canonical_codex_days(&parsed.messages);
-    let codex_enhancement = codex_tier::collect(since.as_deref(), &scanner_settings).unwrap_or_default();
+    let codex_enhancement =
+        codex_tier::collect(since.as_deref(), &scanner_settings).unwrap_or_default();
     let accepted_codex_days = reconciled_codex_days(&canonical_codex, &codex_enhancement);
-
     let mut grouped: BTreeMap<RowKey, RowAccumulator> = BTreeMap::new();
 
     for message in &parsed.messages {
@@ -254,7 +242,8 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
         }
         let client = normalize_text(&message.client, "unknown");
         let model = canonical_model_id(&message.model_id);
-        let (raw_provider, identity) = route_for_message(&route_evidence, message, &client, &model);
+        let (raw_provider, identity) =
+            route_for_message(&route_evidence, message, &client, &model);
         let (metrics, cost_lower_bound) = metrics_from_message(message, pricing.as_deref());
         add_grouped(
             &mut grouped,
@@ -270,6 +259,7 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
             },
             metrics,
             cost_lower_bound,
+            false,
         );
     }
 
@@ -303,6 +293,7 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
             },
             enhanced.metrics,
             enhanced.cost_lower_bound,
+            enhanced.plan_cost_available,
         );
     }
 
@@ -320,12 +311,15 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
             model: key.model,
             tier: key.tier,
             cost_lower_bound: value.cost_lower_bound,
+            plan_cost_available: value.plan_cost_available,
             metrics: value.metrics,
         });
     }
 
     Ok(Ledger {
-        schema_version: 3,
+        // v4 guarantees one migration write from v1.0.0 so `public.json` is
+        // created even when the underlying usage totals did not change.
+        schema_version: 4,
         generated_at: chrono::Utc::now().to_rfc3339(),
         device,
         rows,
@@ -356,10 +350,6 @@ pub fn merge_incremental(mut previous: Ledger, partial: Ledger, since: &str) -> 
     previous
 }
 
-/// Used by the one-shot scheduler to avoid a GitHub write when the accounting
-/// snapshot did not change. Volatile scan timestamps and scan duration do not
-/// participate, but schema/device identity must match so migrations and re-setup
-/// always get a first remote snapshot.
 pub fn same_accounting(left: &Ledger, right: &Ledger) -> bool {
     left.schema_version == right.schema_version
         && left.device.id == right.device.id
@@ -381,7 +371,7 @@ mod tests {
                 platform: "linux".to_string(),
                 arch: "x86_64".to_string(),
                 hostname: "test-host".to_string(),
-                app_version: "1.0.0".to_string(),
+                app_version: "1.0.1".to_string(),
             },
             rows: Vec::new(),
             totals: Metrics::default(),
@@ -396,7 +386,11 @@ mod tests {
         assert!(clients.contains(&"claude".to_string()));
         assert!(clients.contains(&"opencode".to_string()));
         assert!(clients.contains(&"gemini".to_string()));
-        assert!(clients.len() >= 20, "expected broad Tokscale client coverage, got {}", clients.len());
+        assert!(
+            clients.len() >= 20,
+            "expected broad Tokscale client coverage, got {}",
+            clients.len()
+        );
     }
 
     #[test]
@@ -427,36 +421,45 @@ mod tests {
         assert_eq!(cost, 0.0);
         assert!(lower_bound);
 
-        let (offline_cost, offline_lower_bound) = price_usage(
-            "any-model",
-            Some("unknown"),
-            &usage,
-            None,
-        );
+        let (offline_cost, offline_lower_bound) =
+            price_usage("any-model", Some("unknown"), &usage, None);
         assert_eq!(offline_cost, 0.0);
         assert!(offline_lower_bound);
     }
 
     #[test]
-    fn codex_enhancement_requires_exact_reconciliation() {
+    fn codex_enhancement_requires_exact_accounting_not_complete_pricing() {
         let canonical = HashMap::from([(
             "2026-08-26".to_string(),
-            codex_tier::DayReconciliation { tokens: 100, messages: 2, all_priced: true },
+            codex_tier::DayReconciliation {
+                tokens: 100,
+                messages: 2,
+                all_priced: true,
+            },
         )]);
-        let exact = codex_tier::EnhancementResult {
+        let exact_but_lower_bound = codex_tier::EnhancementResult {
             rows: Vec::new(),
             by_date: HashMap::from([(
                 "2026-08-26".to_string(),
-                codex_tier::DayReconciliation { tokens: 100, messages: 2, all_priced: true },
+                codex_tier::DayReconciliation {
+                    tokens: 100,
+                    messages: 2,
+                    all_priced: false,
+                },
             )]),
         };
-        assert!(reconciled_codex_days(&canonical, &exact).contains("2026-08-26"));
+        assert!(reconciled_codex_days(&canonical, &exact_but_lower_bound)
+            .contains("2026-08-26"));
 
         let mismatch = codex_tier::EnhancementResult {
             rows: Vec::new(),
             by_date: HashMap::from([(
                 "2026-08-26".to_string(),
-                codex_tier::DayReconciliation { tokens: 99, messages: 2, all_priced: true },
+                codex_tier::DayReconciliation {
+                    tokens: 99,
+                    messages: 2,
+                    all_priced: true,
+                },
             )]),
         };
         assert!(!reconciled_codex_days(&canonical, &mismatch).contains("2026-08-26"));
@@ -481,9 +484,9 @@ mod tests {
 
     #[test]
     fn incremental_merge_adopts_current_schema() {
-        let previous = empty_ledger(2, "device-a");
-        let partial = empty_ledger(3, "device-a");
+        let previous = empty_ledger(3, "device-a");
+        let partial = empty_ledger(4, "device-a");
         let merged = merge_incremental(previous, partial, "2026-08-24");
-        assert_eq!(merged.schema_version, 3);
+        assert_eq!(merged.schema_version, 4);
     }
 }

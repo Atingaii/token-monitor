@@ -1,10 +1,9 @@
 //! Codex service-tier enhancement.
 //!
-//! Canonical Codex accounting remains Tokscale v4.14.0. This module is a
-//! deliberately narrow adapter derived from the MIT-licensed request parser and
-//! `estimateCost` logic in `falyx6851-byte/codex-monitor` (2026), translated to
-//! Rust and stripped of its HTTP/SQLite/UI concerns. Collector code accepts its
-//! output only after exact per-day reconciliation with Tokscale.
+//! Canonical Codex token accounting remains Tokscale v4.14.0. This module is a
+//! narrow adapter derived from the MIT-licensed request/tier parsing approach in
+//! `falyx6851-byte/codex-monitor`. Its rows may replace canonical Codex rows only
+//! after exact day-level token + message reconciliation in `collector.rs`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
@@ -36,10 +35,6 @@ struct RawUsage {
 
 impl RawUsage {
     fn normalized_metrics(&self) -> Metrics {
-        // This mirrors Tokscale v4.14.0's Codex normalization: cached input is a
-        // subset of input and reasoning is a subset of output. The optional
-        // cache-write bucket is then split out of uncached input without changing
-        // the additive total.
         let cached = self.cached.max(0).min(self.input.max(0));
         let uncached = self.input.max(0).saturating_sub(cached);
         let cache_write = self.cache_write.unwrap_or(0).max(0).min(uncached);
@@ -52,6 +47,7 @@ impl RawUsage {
             reasoning,
             messages: 1,
             cost_usd: 0.0,
+            plan_cost_usd: 0.0,
         }
     }
 
@@ -60,7 +56,9 @@ impl RawUsage {
             "{}/{}/{}/{}/{}/{}",
             self.input,
             self.cached,
-            self.cache_write.map(|v| v.to_string()).unwrap_or_else(|| "?".into()),
+            self.cache_write
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "?".into()),
             self.output,
             self.reasoning,
             self.total
@@ -76,12 +74,18 @@ pub struct EnhancedCodexRow {
     pub tier: String,
     pub metrics: Metrics,
     pub cost_lower_bound: bool,
+    /// At least one request in this grouped row matched the explicit Codex plan
+    /// rate table. If false, the dashboard must show plan cost as unavailable,
+    /// not as an exact $0.
+    pub plan_cost_available: bool,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct DayReconciliation {
     pub tokens: i64,
     pub messages: i32,
+    /// Diagnostic only. Price coverage is not a condition for accepting tier
+    /// evidence; unknown prices are surfaced as a lower bound.
     pub all_priced: bool,
 }
 
@@ -101,6 +105,12 @@ struct PricingConfig {
 
 #[derive(Debug, Deserialize)]
 struct ModelPricing {
+    api: BillingPricing,
+    plan: BillingPricing,
+}
+
+#[derive(Debug, Deserialize)]
+struct BillingPricing {
     standard: ContextPricing,
     fast: ContextPricing,
 }
@@ -121,7 +131,8 @@ struct Rates {
 
 #[derive(Debug)]
 struct CostEstimate {
-    usd: f64,
+    api_usd: f64,
+    plan_usd: f64,
     lower_bound: bool,
 }
 
@@ -134,7 +145,11 @@ fn pricing() -> &'static PricingConfig {
 
 fn number(value: Option<&Value>) -> i64 {
     value
-        .and_then(|v| v.as_i64().or_else(|| v.as_u64().map(|n| n.min(i64::MAX as u64) as i64)))
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_u64().map(|n| n.min(i64::MAX as u64) as i64))
+        })
         .unwrap_or(0)
         .max(0)
 }
@@ -147,31 +162,41 @@ fn optional_number(value: Option<&Value>) -> Option<i64> {
         .map(|n| n.max(0))
 }
 
-/// Port of codex-monitor's `normalizeUsage`, preserving the distinction between
-/// absent cache-write evidence and an explicit zero.
 fn normalize_usage(value: Option<&Value>) -> RawUsage {
-    let Some(usage) = value.and_then(Value::as_object) else { return RawUsage::default(); };
+    let Some(usage) = value.and_then(Value::as_object) else {
+        return RawUsage::default();
+    };
     let details = usage.get("input_tokens_details").and_then(Value::as_object);
     let output_details = usage.get("output_tokens_details").and_then(Value::as_object);
     let input = number(usage.get("input_tokens"));
     let cached = number(
-        usage.get("cached_input_tokens")
-            .or_else(|| details.and_then(|d| d.get("cached_tokens")))
+        usage
+            .get("cached_input_tokens")
+            .or_else(|| details.and_then(|details| details.get("cached_tokens")))
             .or_else(|| usage.get("cache_read_input_tokens")),
     );
     let cache_write = optional_number(
-        usage.get("cache_write_input_tokens")
+        usage
+            .get("cache_write_input_tokens")
             .or_else(|| usage.get("cache_write_tokens"))
-            .or_else(|| details.and_then(|d| d.get("cache_write_tokens"))),
+            .or_else(|| details.and_then(|details| details.get("cache_write_tokens"))),
     );
     let output = number(usage.get("output_tokens"));
     let reasoning = number(
-        usage.get("reasoning_output_tokens")
-            .or_else(|| output_details.and_then(|d| d.get("reasoning_tokens"))),
+        usage
+            .get("reasoning_output_tokens")
+            .or_else(|| output_details.and_then(|details| details.get("reasoning_tokens"))),
     );
     let total = optional_number(usage.get("total_tokens"))
         .unwrap_or_else(|| input.saturating_add(output));
-    RawUsage { input, cached, cache_write, output, reasoning, total }
+    RawUsage {
+        input,
+        cached,
+        cache_write,
+        output,
+        reasoning,
+        total,
+    }
 }
 
 fn normalize_tier(value: &str) -> String {
@@ -182,8 +207,6 @@ fn normalize_tier(value: &str) -> String {
     }
 }
 
-/// Port of codex-monitor's explicit candidate list. We intentionally do not
-/// recursively search arbitrary JSON for a field named `service_tier`.
 fn extract_service_tier(payload: &Value) -> Option<String> {
     let candidates = [
         payload.pointer("/thread_settings/service_tier"),
@@ -198,11 +221,17 @@ fn extract_service_tier(payload: &Value) -> Option<String> {
         payload.pointer("/response/serviceTier"),
     ];
     candidates.into_iter().flatten().find_map(|value| {
-        value.as_str().map(normalize_tier).filter(|tier| !tier.is_empty())
+        value
+            .as_str()
+            .map(normalize_tier)
+            .filter(|tier| !tier.is_empty())
     })
 }
 
-fn resolve_model<'a>(model: &'a str, config: &'a PricingConfig) -> Option<(&'a str, &'a ModelPricing)> {
+fn resolve_model<'a>(
+    model: &'a str,
+    config: &'a PricingConfig,
+) -> Option<(&'a str, &'a ModelPricing)> {
     let raw = model.trim().to_ascii_lowercase();
     if let Some((key, rates)) = config.models.get_key_value(&raw) {
         return Some((key.as_str(), rates));
@@ -212,42 +241,59 @@ fn resolve_model<'a>(model: &'a str, config: &'a PricingConfig) -> Option<(&'a s
     Some((key.as_str(), rates))
 }
 
-/// Port of codex-monitor's tier-aware formula. Only the rate data is refreshed
-/// from current official OpenAI sources; unknown model/tier combinations remain
-/// unpriced instead of being guessed.
+fn rates_for<'a>(pricing: &'a BillingPricing, tier: &str, long: bool) -> Option<&'a Rates> {
+    match (normalize_tier(tier).as_str(), long) {
+        ("standard", false) => Some(&pricing.standard.short),
+        ("standard", true) => Some(&pricing.standard.long),
+        ("fast", false) => Some(&pricing.fast.short),
+        ("fast", true) => Some(&pricing.fast.long),
+        _ => None,
+    }
+}
+
+fn estimate_with_rates(usage: &RawUsage, rates: &Rates) -> f64 {
+    let cached = usage.cached.max(0).min(usage.input.max(0));
+    let uncached = usage.input.max(0).saturating_sub(cached);
+    let cache_write = usage
+        .cache_write
+        .map(|value| value.max(0).min(uncached))
+        .unwrap_or(0);
+    let regular_input = uncached.saturating_sub(cache_write);
+    (regular_input as f64 / 1_000_000.0) * rates.input
+        + (cached as f64 / 1_000_000.0) * rates.cached_input
+        + (cache_write as f64 / 1_000_000.0) * rates.cache_write
+        + (usage.output.max(0) as f64 / 1_000_000.0) * rates.output
+}
+
 fn estimate_cost(usage: &RawUsage, model: &str, tier: &str) -> Option<CostEstimate> {
     let config = pricing();
     let (_, model_pricing) = resolve_model(model, config)?;
-    let tier = normalize_tier(tier);
     let long = usage.input > config.long_context_threshold_tokens;
-    let rates = match (tier.as_str(), long) {
-        ("standard", false) => &model_pricing.standard.short,
-        ("standard", true) => &model_pricing.standard.long,
-        ("fast", false) => &model_pricing.fast.short,
-        ("fast", true) => &model_pricing.fast.long,
-        _ => return None,
-    };
-
+    let api_rates = rates_for(&model_pricing.api, tier, long)?;
+    let plan_rates = rates_for(&model_pricing.plan, tier, long)?;
     let cached = usage.cached.max(0).min(usage.input.max(0));
     let uncached = usage.input.max(0).saturating_sub(cached);
-    let cache_write = usage.cache_write.map(|v| v.max(0).min(uncached)).unwrap_or(0);
-    let regular_input = uncached.saturating_sub(cache_write);
-    let lower_bound = usage.cache_write.is_none() && uncached > 0 && rates.cache_write > 0.0;
-
-    let usd = (regular_input as f64 / 1_000_000.0) * rates.input
-        + (cached as f64 / 1_000_000.0) * rates.cached_input
-        + (cache_write as f64 / 1_000_000.0) * rates.cache_write
-        + (usage.output.max(0) as f64 / 1_000_000.0) * rates.output;
-    Some(CostEstimate { usd, lower_bound })
+    let lower_bound = usage.cache_write.is_none()
+        && uncached > 0
+        && (api_rates.cache_write > 0.0 || plan_rates.cache_write > 0.0);
+    Some(CostEstimate {
+        api_usd: estimate_with_rates(usage, api_rates),
+        plan_usd: estimate_with_rates(usage, plan_rates),
+        lower_bound,
+    })
 }
 
 fn timestamp_ms(value: Option<&Value>) -> Option<i64> {
-    let raw = value?.as_str()?;
-    chrono::DateTime::parse_from_rfc3339(raw).ok().map(|dt| dt.timestamp_millis())
+    chrono::DateTime::parse_from_rfc3339(value?.as_str()?)
+        .ok()
+        .map(|date| date.timestamp_millis())
 }
 
 fn string_at<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value.get(key).and_then(Value::as_str).filter(|s| !s.trim().is_empty())
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
 }
 
 fn usage_dedupe_key(session_id: &str, usage: &RawUsage, total: &RawUsage) -> String {
@@ -272,22 +318,36 @@ struct RequestRecord {
 }
 
 fn parse_session_file(path: &Path, bucket_timezone: &BucketTimezone) -> Vec<RequestRecord> {
-    let Ok(file) = File::open(path) else { return Vec::new(); };
-    let mut session_id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown").to_string();
+    let Ok(file) = File::open(path) else {
+        return Vec::new();
+    };
+    let mut session_id = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("unknown")
+        .to_string();
     let mut provider = String::new();
     let mut current_model = String::new();
     let mut current_tier = "standard".to_string();
     let mut records = Vec::new();
 
     for line in BufReader::new(file).lines().map_while(Result::ok) {
-        if line.trim().is_empty() { continue; }
-        let Ok(row) = serde_json::from_str::<Value>(&line) else { continue; };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(row) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         let payload = row.get("payload").unwrap_or(&Value::Null);
-        if let Some(tier) = extract_service_tier(payload) { current_tier = tier; }
+        if let Some(tier) = extract_service_tier(payload) {
+            current_tier = tier;
+        }
 
         match string_at(&row, "type").unwrap_or_default() {
             "session_meta" => {
-                if let Some(id) = string_at(payload, "id") { session_id = id.to_string(); }
+                if let Some(id) = string_at(payload, "id") {
+                    session_id = id.to_string();
+                }
                 if let Some(model_provider) = string_at(payload, "model_provider") {
                     provider = model_provider.to_string();
                 }
@@ -298,11 +358,14 @@ fn parse_session_file(path: &Path, bucket_timezone: &BucketTimezone) -> Vec<Requ
                 }
             }
             "event_msg" if string_at(payload, "type") == Some("token_count") => {
-                let Some(ms) = timestamp_ms(row.get("timestamp")) else { continue; };
+                let Some(ms) = timestamp_ms(row.get("timestamp")) else {
+                    continue;
+                };
                 let info = payload.get("info").unwrap_or(&Value::Null);
                 let usage = normalize_usage(info.get("last_token_usage"));
-                if usage.total <= 0 { continue; }
-                if usage.total > 0 && usage.input == 0 && usage.cached == 0 && usage.output == 0 {
+                if usage.total <= 0
+                    || (usage.input == 0 && usage.cached == 0 && usage.output == 0)
+                {
                     continue;
                 }
                 let total = normalize_usage(info.get("total_token_usage"));
@@ -339,11 +402,16 @@ fn codex_roots() -> Vec<PathBuf> {
 }
 
 fn recent_enough(path: &Path, incremental: bool) -> bool {
-    if !incremental { return true; }
-    let Ok(modified) = path.metadata().and_then(|m| m.modified()) else { return true; };
-    modified >= SystemTime::now()
-        .checked_sub(Duration::from_secs(5 * 24 * 3600))
-        .unwrap_or(SystemTime::UNIX_EPOCH)
+    if !incremental {
+        return true;
+    }
+    let Ok(modified) = path.metadata().and_then(|metadata| metadata.modified()) else {
+        return true;
+    };
+    modified
+        >= SystemTime::now()
+            .checked_sub(Duration::from_secs(5 * 24 * 3600))
+            .unwrap_or(SystemTime::UNIX_EPOCH)
 }
 
 pub fn collect(since: Option<&str>, scanner_settings: &ScannerSettings) -> Result<EnhancementResult> {
@@ -353,26 +421,42 @@ pub fn collect(since: Option<&str>, scanner_settings: &ScannerSettings) -> Resul
     let mut requests = Vec::new();
 
     for root in codex_roots() {
-        if !root.exists() { continue; }
-        for entry in WalkDir::new(&root).follow_links(false).into_iter().filter_map(Result::ok) {
-            if !entry.file_type().is_file() { continue; }
+        if !root.exists() {
+            continue;
+        }
+        for entry in WalkDir::new(&root)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
             let path = entry.path();
-            if path.extension().and_then(|v| v.to_str()) != Some("jsonl") || !recent_enough(path, incremental) {
+            if path.extension().and_then(|value| value.to_str()) != Some("jsonl")
+                || !recent_enough(path, incremental)
+            {
                 continue;
             }
             for record in parse_session_file(path, &bucket_timezone) {
-                if since.is_some_and(|start| record.date.as_str() < start) { continue; }
-                if seen.insert(record.dedupe.clone()) { requests.push(record); }
+                if since.is_some_and(|start| record.date.as_str() < start) {
+                    continue;
+                }
+                if seen.insert(record.dedupe.clone()) {
+                    requests.push(record);
+                }
             }
         }
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
     struct Key(String, String, String, String); // date, model, provider, tier
+
     #[derive(Default)]
     struct Acc {
         metrics: Metrics,
         lower_bound: bool,
+        priced_any: bool,
     }
 
     let mut grouped: BTreeMap<Key, Acc> = BTreeMap::new();
@@ -381,23 +465,40 @@ pub fn collect(since: Option<&str>, scanner_settings: &ScannerSettings) -> Resul
     for request in requests {
         let mut metrics = request.usage.normalized_metrics();
         let priced = request.cost.is_some();
-        let lower_bound = request.cost.as_ref().is_some_and(|cost| cost.lower_bound);
-        metrics.cost_usd = request.cost.as_ref().map(|cost| cost.usd).unwrap_or(0.0);
+        let lower_bound = request
+            .cost
+            .as_ref()
+            .map(|cost| cost.lower_bound)
+            .unwrap_or(true);
+        metrics.cost_usd = request.cost.as_ref().map(|cost| cost.api_usd).unwrap_or(0.0);
+        metrics.plan_cost_usd = request
+            .cost
+            .as_ref()
+            .map(|cost| cost.plan_usd)
+            .unwrap_or(0.0);
 
-        let day = by_date.entry(request.date.clone()).or_insert_with(|| DayReconciliation {
-            tokens: 0,
-            messages: 0,
-            all_priced: true,
-        });
+        let day = by_date
+            .entry(request.date.clone())
+            .or_insert_with(|| DayReconciliation {
+                tokens: 0,
+                messages: 0,
+                all_priced: true,
+            });
         day.tokens = day.tokens.saturating_add(metrics.total_tokens());
         day.messages = day.messages.saturating_add(metrics.messages);
         day.all_priced &= priced;
 
         let entry = grouped
-            .entry(Key(request.date, request.model, request.provider, request.tier))
+            .entry(Key(
+                request.date,
+                request.model,
+                request.provider,
+                request.tier,
+            ))
             .or_default();
         entry.metrics.add(&metrics);
         entry.lower_bound |= lower_bound;
+        entry.priced_any |= priced;
     }
 
     let rows = grouped
@@ -409,6 +510,7 @@ pub fn collect(since: Option<&str>, scanner_settings: &ScannerSettings) -> Resul
             tier,
             metrics: acc.metrics,
             cost_lower_bound: acc.lower_bound,
+            plan_cost_available: acc.priced_any,
         })
         .collect();
 
@@ -426,7 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn current_sol_fast_short_context_example() {
+    fn sol_fast_has_separate_api_and_plan_equivalents() {
         let usage = RawUsage {
             input: 100_000,
             cached: 50_000,
@@ -436,10 +538,28 @@ mod tests {
             total: 110_000,
         };
         let cost = estimate_cost(&usage, "gpt-5.6-sol", "priority").unwrap();
-        // 40K regular input * $8/M + 50K cached * $0.8/M +
-        // 10K cache write * $10/M + 10K output * $40/M = $0.86.
-        assert!((cost.usd - 0.86).abs() < 1e-12);
+        // API Fast: 40K*$8 + 50K*$0.8 + 10K*$10 + 10K*$40 = $0.86.
+        assert!((cost.api_usd - 0.86).abs() < 1e-12);
+        // Plan/legacy basis: 2.5x of launch-plan inputs/output/cache buckets.
+        assert!((cost.plan_usd - 1.46875).abs() < 1e-12);
         assert!(!cost.lower_bound);
+    }
+
+    #[test]
+    fn sol_standard_plan_preserves_launch_basis() {
+        let usage = RawUsage {
+            input: 100_000,
+            cached: 50_000,
+            cache_write: Some(0),
+            output: 10_000,
+            reasoning: 0,
+            total: 110_000,
+        };
+        let cost = estimate_cost(&usage, "gpt-5.6-sol", "standard").unwrap();
+        // Current API: 50K*$4 + 50K*$0.4 + 10K*$20 = $0.42.
+        assert!((cost.api_usd - 0.42).abs() < 1e-12);
+        // Plan basis: 50K*$5 + 50K*$0.5 + 10K*$30 = $0.575.
+        assert!((cost.plan_usd - 0.575).abs() < 1e-12);
     }
 
     #[test]

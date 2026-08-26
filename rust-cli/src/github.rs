@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::crypto::device_hash;
-use crate::model::EncryptedLedger;
+use crate::model::{EncryptedLedger, PublicLedger};
 
 const API: &str = "https://api.github.com";
 const API_VERSION: &str = "2022-11-28";
@@ -85,7 +85,7 @@ pub fn ensure_user_fork(token: &str) -> Result<String> {
             bail!("{expected} already exists but is not a fork of {UPSTREAM_REPO}; rerun setup with --repo OWNER/RENAMED_FORK")
         }
         if repository.private {
-            bail!("{expected} is private. The zero-server dashboard needs the encrypted ledger branches to be publicly readable")
+            bail!("{expected} is private. The zero-server dashboard requires publicly readable aggregate snapshots")
         }
         return Ok(repository.full_name);
     }
@@ -105,8 +105,6 @@ pub fn ensure_user_fork(token: &str) -> Result<String> {
         checked(create, "automatic fork creation")?;
     }
 
-    // Fork creation is asynchronous inside GitHub. Poll the exact target repo;
-    // this keeps the CLI one-command while remaining bounded.
     for _ in 0..20 {
         let response = request(&http, token, reqwest::Method::GET, repo_url.clone()).send()?;
         if response.status().is_success() {
@@ -136,7 +134,7 @@ impl GithubClient {
         )?;
         let repository: RepositoryResponse = response.json()?;
         if repository.private {
-            bail!("the fork must be public for the zero-server dashboard. Device snapshots are AES-GCM encrypted before upload")
+            bail!("the fork must be public for the zero-server dashboard. Only de-identified aggregate snapshots are publicly readable; the compatibility ledger remains AES-GCM encrypted")
         }
         if !repo_is_upstream_fork(&repository) {
             bail!("{} is not a fork of {}; use the project fork itself as the ledger repository", repository.full_name, UPSTREAM_REPO)
@@ -148,20 +146,41 @@ impl GithubClient {
         format!("tm-ledger-{}", device_hash(device_id))
     }
 
-    pub fn replace_snapshot(&self, device_id: &str, envelope: &EncryptedLedger) -> Result<String> {
+    /// Replace one device branch with a history-free root snapshot containing:
+    /// - `ledger.json`: AES-256-GCM compatibility/private aggregate envelope.
+    /// - `public.json`: de-identified aggregate-only payload for the zero-login
+    ///   static dashboard. No hostname, raw device id, session id or content is
+    ///   serialized into the public payload.
+    pub fn replace_snapshot(
+        &self,
+        device_id: &str,
+        envelope: &EncryptedLedger,
+        public_ledger: &PublicLedger,
+    ) -> Result<String> {
         let branch = Self::snapshot_branch(device_id);
-        let serialized = serde_json::to_string(envelope)?;
-        let blob: ShaResponse = checked(
+        let private_serialized = serde_json::to_string(envelope)?;
+        let public_serialized = serde_json::to_string(public_ledger)?;
+
+        let private_blob: ShaResponse = checked(
             self.request(reqwest::Method::POST, format!("{API}/repos/{}/git/blobs", self.repo))
-                .json(&json!({ "content": serialized, "encoding": "utf-8" }))
+                .json(&json!({ "content": private_serialized, "encoding": "utf-8" }))
                 .send()?,
-            "blob creation",
+            "encrypted blob creation",
+        )?.json()?;
+        let public_blob: ShaResponse = checked(
+            self.request(reqwest::Method::POST, format!("{API}/repos/{}/git/blobs", self.repo))
+                .json(&json!({ "content": public_serialized, "encoding": "utf-8" }))
+                .send()?,
+            "public aggregate blob creation",
         )?.json()?;
         let tree: ShaResponse = checked(
             self.request(reqwest::Method::POST, format!("{API}/repos/{}/git/trees", self.repo))
-                .json(&json!({ "tree": [{ "path": "ledger.json", "mode": "100644", "type": "blob", "sha": blob.sha }] }))
+                .json(&json!({ "tree": [
+                    { "path": "ledger.json", "mode": "100644", "type": "blob", "sha": private_blob.sha },
+                    { "path": "public.json", "mode": "100644", "type": "blob", "sha": public_blob.sha }
+                ] }))
                 .send()?,
-            "tree creation",
+            "snapshot tree creation",
         )?.json()?;
         let commit: ShaResponse = checked(
             self.request(reqwest::Method::POST, format!("{API}/repos/{}/git/commits", self.repo))
