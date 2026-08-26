@@ -2,7 +2,7 @@ name: Rust CLI CI
 
 on:
   push:
-    branches: [main, feat/github-ledger-pages]
+    branches: [main, feat/github-ledger-pages, feat/v1.1-dashboard-pricing-platform-fixes]
   pull_request:
 
 permissions:
@@ -17,27 +17,47 @@ jobs:
         include:
           - label: linux-x64
             os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            binary: token-monitor
           - label: linux-arm64
             os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            binary: token-monitor
           - label: windows-x64
             os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: token-monitor.exe
           - label: windows-arm64
             os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            binary: token-monitor.exe
           - label: macos-arm64
             os: macos-latest
+            target: aarch64-apple-darwin
+            binary: token-monitor
           - label: macos-x64
             os: macos-15-intel
+            target: x86_64-apple-darwin
+            binary: token-monitor
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install musl toolchain
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
       - name: Platform evidence
         run: rustc -vV
       - name: Validate Unix installer syntax
         if: runner.os != 'Windows'
         shell: bash
         run: sh -n install.sh
-      - name: Validate PowerShell installer syntax
+      - name: Validate PowerShell 7 installer syntax
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -48,22 +68,49 @@ jobs:
             $errors | ForEach-Object { Write-Error $_.Message }
             exit 1
           }
+      - name: Validate Windows PowerShell 5.1 installer syntax
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path './install.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Unit tests
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --all-targets --target ${{ matrix.target }}
       - name: Release build smoke test
-        run: cargo build --release --workspace
-      - name: CLI surface smoke test (Unix)
-        if: runner.os != 'Windows'
+        run: cargo build --release --workspace --target ${{ matrix.target }}
+      - name: Verify Linux binary is static musl
+        if: runner.os == 'Linux'
         shell: bash
         run: |
-          ./target/release/token-monitor --version
-          ./target/release/token-monitor clients
+          binary='target/${{ matrix.target }}/release/${{ matrix.binary }}'
+          file "$binary"
+          if readelf -l "$binary" | grep -q 'Requesting program interpreter'; then
+            echo 'Expected a static musl binary, but ELF requests a dynamic interpreter.' >&2
+            exit 1
+          fi
+          "$binary" --version
+          "$binary" clients >/dev/null
+      - name: CLI surface smoke test (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          binary='target/${{ matrix.target }}/release/${{ matrix.binary }}'
+          "$binary" --version
+          "$binary" clients >/dev/null
       - name: CLI surface smoke test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          ./target/release/token-monitor.exe --version
-          ./target/release/token-monitor.exe clients
+          $binary = 'target/${{ matrix.target }}/release/${{ matrix.binary }}'
+          & $binary --version
+          if ($LASTEXITCODE -ne 0) { throw 'version smoke test failed' }
+          & $binary clients | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'clients smoke test failed' }
 
   rust-quality:
     runs-on: ubuntu-latest
