@@ -30,12 +30,31 @@ jobs:
           node --check web/analytics.js
           node --check web/app.js
           node web/analytics.test.cjs
+      - name: Check GitHub Pages enablement
+        id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=GitHub Pages setup required::Open Settings → Pages and select GitHub Actions as the source once. Then rerun this workflow."
+          fi
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
+        if: steps.pages.outputs.enabled == 'true'
       - uses: actions/upload-pages-artifact@v3
+        if: steps.pages.outputs.enabled == 'true'
         with:
           path: web
       - name: Deploy
         id: deployment
+        if: steps.pages.outputs.enabled == 'true'
         uses: actions/deploy-pages@v4
+      - name: Pages not enabled yet
+        if: steps.pages.outputs.enabled != 'true'
+        run: |
+          echo "Dashboard validation passed."
+          echo "Repository owner action required once: Settings → Pages → Source → GitHub Actions."
+          echo "After that, rerun 'Deploy Dashboard'. Future web changes deploy automatically."
