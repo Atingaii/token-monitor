@@ -34,20 +34,31 @@ jobs:
           cache: npm
           cache-dependency-path: web-ui/package.json
 
-      - name: Reconstruct Figma application source
+      - name: Prepare Figma application source
         shell: bash
         run: |
-          cat web-ui/src/app.part.* | base64 -d | gunzip > web-ui/src/app.tsx
+          if [ ! -s web-ui/src/app.tsx ]; then
+            cat web-ui/src/app.part.* | base64 -d | gunzip > web-ui/src/app.tsx
+          fi
           test -s web-ui/src/app.tsx
           grep -q "FAST_SUBSCRIPTION_MULTIPLIER = 2.5" web-ui/src/app.tsx
           grep -q "model_prices_and_context_window.json" web-ui/src/app.tsx
 
-      - name: Apply official speed-pricing policy
+      - name: Apply audited accounting and UI policy
         working-directory: web-ui
         run: |
           python3 patch-pricing-policy.py
           grep -q "subscriptionSpeedMultiplier" src/app.tsx
           ! grep -q "FAST_SUBSCRIPTION_MULTIPLIER" src/app.tsx
+          grep -q "使用统计" src/app.tsx
+          grep -q "缓存命中率" src/app.tsx
+          grep -q "按设备" src/app.tsx
+          grep -q "按路由提供商" src/app.tsx
+          ! grep -q "高级用量分析" src/app.tsx
+          ! grep -q "repoBadge={dataset.repo}" src/app.tsx
+          ! grep -q "pricingBadge={dataset.pricing.source}" src/app.tsx
+          ! grep -q "Codex Fast: GPT-5.6/5.5 2.5×" src/app.tsx
+          test -s public/token-monitor-icon.svg
 
       - name: Install dashboard dependencies
         working-directory: web-ui
@@ -64,6 +75,7 @@ jobs:
         run: |
           cp web/device-index.json web-ui/dist/device-index.json
           test -s web-ui/dist/device-index.json
+          test -s web-ui/dist/token-monitor-icon.svg
 
       - name: Check GitHub Pages enablement
         id: pages
