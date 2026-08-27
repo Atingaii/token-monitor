@@ -1,11 +1,12 @@
 name: Deploy Dashboard
 
-# Repository Pages source: GitHub Actions.
+# Fast web-only deployment. Expensive Rust/native CI is intentionally manual.
 on:
   push:
     branches: [main]
     paths:
-      - 'web/**'
+      - 'web-ui/**'
+      - 'web/device-index.json'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -26,12 +27,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate static dashboard
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-ui/package.json
+
+      - name: Reconstruct Figma application source
+        shell: bash
         run: |
-          node --check web/github-api-shim.js
-          node --check web/analytics.js
-          node --check web/app.js
-          node web/analytics.test.cjs
+          cat web-ui/src/app.part.* | base64 -d | gunzip > web-ui/src/app.tsx
+          test -s web-ui/src/app.tsx
+          grep -q "FAST_SUBSCRIPTION_MULTIPLIER = 2.5" web-ui/src/app.tsx
+          grep -q "model_prices_and_context_window.json" web-ui/src/app.tsx
+
+      - name: Install dashboard dependencies
+        working-directory: web-ui
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck and build
+        working-directory: web-ui
+        run: |
+          npm run typecheck
+          npm run build
+
+      - name: Add zero-API device index fallback
+        shell: bash
+        run: |
+          cp web/device-index.json web-ui/dist/device-index.json
+          test -s web-ui/dist/device-index.json
+
       - name: Check GitHub Pages enablement
         id: pages
         env:
@@ -42,21 +68,15 @@ jobs:
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=GitHub Pages setup required::Open Settings → Pages and select GitHub Actions as the source once. Then rerun this workflow."
+            echo "::error::GitHub Pages is not enabled for this repository."
+            exit 1
           fi
+
       - uses: actions/configure-pages@v5
-        if: steps.pages.outputs.enabled == 'true'
       - uses: actions/upload-pages-artifact@v3
-        if: steps.pages.outputs.enabled == 'true'
         with:
-          path: web
+          path: web-ui/dist
+
       - name: Deploy
         id: deployment
-        if: steps.pages.outputs.enabled == 'true'
         uses: actions/deploy-pages@v4
-      - name: Pages not enabled yet
-        if: steps.pages.outputs.enabled != 'true'
-        run: |
-          echo "Dashboard validation passed."
-          echo "Repository owner action required once: Settings → Pages → Source → GitHub Actions."
-          echo "After that, rerun 'Deploy Dashboard'. Future web changes deploy automatically."
