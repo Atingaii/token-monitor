@@ -7,8 +7,7 @@
 //! apply to all input-side buckets.
 //!
 //! General model prices are read from the same public models.dev catalog CC
-//! Switch can sync from. GPT-5.6 is guarded by CC Switch's built-in seed prices
-//! (also independently present in Sub2API's fallback table), so API catalog
+//! Switch can sync from. GPT-5.6 is guarded by audited seed prices so API catalog
 //! changes do not silently rewrite the subscription-equivalent accounting policy.
 
 use std::collections::HashMap;
@@ -25,6 +24,7 @@ const CACHE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const GPT56_LONG_CONTEXT_THRESHOLD: i64 = 272_000;
 const GPT56_LONG_INPUT_MULTIPLIER: f64 = 2.0;
 const GPT56_LONG_OUTPUT_MULTIPLIER: f64 = 1.5;
+const CODEX_FAST_MULTIPLIER: f64 = 2.5;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 struct ModelsDevCost {
@@ -69,8 +69,6 @@ impl EffectivePricing {
             return None;
         }
         Some(Self {
-            // models.dev reports USD per million tokens, matching CC Switch's
-            // ModelPricingInfo UI/storage schema.
             input: input / 1_000_000.0,
             output: output / 1_000_000.0,
             cache_read: cost.cache_read.unwrap_or(0.0) / 1_000_000.0,
@@ -126,11 +124,6 @@ fn strip_date_suffix(value: &str) -> Option<String> {
     (suffix.len() == 8 && suffix.chars().all(|ch| ch.is_ascii_digit())).then(|| base.to_string())
 }
 
-/// CC Switch's models.dev sync is provider-aware. For a provider-less local
-/// session we prefer the model family's canonical vendor when the catalog has
-/// the same normalized model under more than one provider, then fall back to a
-/// stable provider-id ordering. This avoids HashMap iteration changing prices
-/// across runs.
 fn provider_preference(model: &str, provider: &str) -> u8 {
     let canonical = if model.starts_with("gpt-") || model.starts_with("o1-") || model.starts_with("o3-") || model.starts_with("o4-") {
         Some("openai")
@@ -237,7 +230,7 @@ impl PriceBook {
             policy: "subscription-equivalent".to_string(),
             source: format!("CC Switch compatible · {}", self.catalog_state),
             source_url: MODELS_DEV_URL.to_string(),
-            compatibility: "GPT-5.6 guarded to CC Switch/Sub2API rates; Fast/Priority uses the published priority rate".to_string(),
+            compatibility: "GPT-5.6 guarded base rates; Codex Fast/Priority uses 2.5x Standard".to_string(),
         }
     }
 
@@ -267,8 +260,6 @@ impl PriceBook {
 
         let tier = tier.unwrap_or("standard").trim().to_ascii_lowercase();
         if matches!(tier.as_str(), "fast" | "priority") {
-            // Do not invent a generic Fast multiplier. Use explicit priority
-            // rates when the mature source/fallback provides them. GPT-5.6 does.
             let Some(input) = pricing.priority_input else {
                 return PriceQuote { cost_usd: 0.0, lower_bound: true };
             };
@@ -306,10 +297,9 @@ impl PriceBook {
     }
 }
 
-/// CC Switch built-in seed prices, cross-checked against Sub2API's GPT-5.6
-/// fallback. Values are USD/token; base card is per-MTok:
-/// Sol 5 / 30 / 0.50 / 6.25, Terra 2 / 12 / 0.20 / 2.50,
-/// Luna 0.20 / 1.20 / 0.02 / 0.25. Fast/Priority is 2× for GPT-5.6.
+/// Guarded GPT-5.6 subscription-equivalent base prices. Values are USD/token;
+/// base card per MTok: Sol 5 / 30 / 0.50 / 6.25, Terra 2 / 12 / 0.20 / 2.50,
+/// Luna 0.20 / 1.20 / 0.02 / 0.25. Codex Fast/Priority is 2.5x Standard.
 fn guarded_pricing(model_id: &str) -> Option<EffectivePricing> {
     let normalized = match model_id {
         "gpt-5.6" | "gpt-5.6-low" | "gpt-5.6-medium" | "gpt-5.6-high" | "gpt-5.6-xhigh" | "gpt-5.6-minimal" => "gpt-5.6-sol",
@@ -326,10 +316,10 @@ fn guarded_pricing(model_id: &str) -> Option<EffectivePricing> {
         output,
         cache_read,
         cache_write,
-        priority_input: Some(input * 2.0),
-        priority_output: Some(output * 2.0),
-        priority_cache_read: Some(cache_read * 2.0),
-        priority_cache_write: Some(cache_write * 2.0),
+        priority_input: Some(input * CODEX_FAST_MULTIPLIER),
+        priority_output: Some(output * CODEX_FAST_MULTIPLIER),
+        priority_cache_read: Some(cache_read * CODEX_FAST_MULTIPLIER),
+        priority_cache_write: Some(cache_write * CODEX_FAST_MULTIPLIER),
         long_context_threshold: Some(GPT56_LONG_CONTEXT_THRESHOLD),
         long_input_multiplier: GPT56_LONG_INPUT_MULTIPLIER,
         long_output_multiplier: GPT56_LONG_OUTPUT_MULTIPLIER,
@@ -345,19 +335,18 @@ mod tests {
     }
 
     #[test]
-    fn gpt56_sol_uses_cc_switch_base_card() {
+    fn gpt56_sol_uses_guarded_base_card() {
         let book = PriceBook { catalog: HashMap::new(), catalog_state: "test" };
         let quote = book.quote("gpt-5.6-sol", Some("standard"), &metrics(100_000, 50_000, 10_000, 10_000));
-        // 100k*$5/M + 50k*$0.50/M + 10k*$6.25/M + 10k*$30/M
         assert!((quote.cost_usd - 0.8875).abs() < 1e-9);
         assert!(!quote.lower_bound);
     }
 
     #[test]
-    fn gpt56_fast_is_explicit_two_x_priority_card() {
+    fn gpt56_fast_is_explicit_two_point_five_x_card() {
         let book = PriceBook { catalog: HashMap::new(), catalog_state: "test" };
         let quote = book.quote("gpt-5.6-sol", Some("fast"), &metrics(100_000, 50_000, 10_000, 10_000));
-        assert!((quote.cost_usd - 1.775).abs() < 1e-9);
+        assert!((quote.cost_usd - 2.21875).abs() < 1e-9);
         assert!(!quote.lower_bound);
     }
 
