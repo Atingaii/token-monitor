@@ -146,8 +146,18 @@ try {
   }
 
   Write-Host "`nInstalled: $Binary"
-  & $Binary status *> $null
-  $Configured = ($LASTEXITCODE -eq 0)
+  $SavedErrorActionPreference = $ErrorActionPreference
+  try {
+    # Windows PowerShell 5.1 promotes native stderr to an ErrorRecord when
+    # ErrorActionPreference is Stop. `status` legitimately writes a diagnostic
+    # when this is a fresh install, so probe it non-fatally and use its exit code.
+    $ErrorActionPreference = 'SilentlyContinue'
+    & $Binary status 1>$null 2>$null
+    $StatusExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $SavedErrorActionPreference
+  }
+  $Configured = ($StatusExitCode -eq 0)
   if ($Configured) {
     Write-Host 'Existing Token Monitor configuration detected on this machine.'
     Write-Host 'Refresh historical accounting after an upgrade with:'
