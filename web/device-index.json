@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "kind": "token-monitor-device-index",
+  "branches": [
+    "tm-ledger-0740f1052bc843e6",
+    "tm-ledger-5e4056ad24282d75"
+  ],
+  "updatedAt": "2026-08-27T02:00:00Z"
+}
