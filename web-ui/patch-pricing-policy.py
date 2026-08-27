@@ -37,9 +37,15 @@ if not match:
 row = match.group("row")
 text = text[: match.start()] + f"const multiplier = subscriptionSpeedMultiplier({row});" + text[match.end() :]
 
+# Keep the official multiplier in the accounting logic, but do not surface
+# implementation/source details or numeric multiplier guidance in the dashboard UI.
+text = text.replace(
+    "Codex Fast: GPT-5.6/5.5 2.5× · GPT-5.4 2×",
+    "Fast",
+)
 text = text.replace(
     "Fast 2.5×",
-    "Codex Fast: GPT-5.6/5.5 2.5× · GPT-5.4 2×",
+    "Fast",
 )
 text = text.replace(
     "fastMultiplier: FAST_SUBSCRIPTION_MULTIPLIER,",
@@ -50,5 +56,7 @@ if "FAST_SUBSCRIPTION_MULTIPLIER" in text:
     raise SystemExit("generic Fast multiplier survived patch")
 if "subscriptionSpeedMultiplier" not in text:
     raise SystemExit("surface-aware speed policy missing")
+if "Codex Fast: GPT-5.6/5.5 2.5× · GPT-5.4 2×" in text:
+    raise SystemExit("internal Fast multiplier label survived patch")
 
 path.write_text(text, encoding="utf-8")
