@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-$Base = if ($env:TOKEN_MONITOR_RELEASE_BASE) { $env:TOKEN_MONITOR_RELEASE_BASE.TrimEnd('/') } else { 'https://token-monitor-v110-final-cuidongshan350-1312.vercel.app' }
+$Base = if ($env:TOKEN_MONITOR_RELEASE_BASE) { $env:TOKEN_MONITOR_RELEASE_BASE.TrimEnd('/') } else { 'https://github.com/Atingaii/token-monitor/releases/download/v1.1.0' }
 
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
   try {
