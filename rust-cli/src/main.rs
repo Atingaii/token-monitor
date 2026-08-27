@@ -165,9 +165,14 @@ fn device_info(config: &Config) -> DeviceInfo {
 
 fn publish_dashboard_access(config: &Config, password: &str) -> Result<String> {
     let envelope = crypto::wrap_dashboard_key(&config.repo, &config.dashboard_key, password)?;
-    GithubClient::new(config.repo.clone(), config.github_token.clone())?
+    let github = GithubClient::new(config.repo.clone(), config.github_token.clone())?;
+    let branch = github
         .replace_dashboard_access(&envelope)
-        .context("failed to publish the password-wrapped dashboard access manifest")
+        .context("failed to publish the password-wrapped dashboard access manifest")?;
+    github
+        .refresh_dashboard_index()
+        .context("failed to publish the dashboard device index")?;
+    Ok(branch)
 }
 
 fn run_sync(full: bool, quiet: bool) -> Result<()> {
@@ -189,10 +194,18 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
     };
 
     config::write_cached_ledger(&ledger)?;
+    let github = GithubClient::new(config.repo.clone(), config.github_token.clone())?;
     if previous_for_compare
         .as_ref()
         .is_some_and(|previous| collector::same_accounting(previous, &ledger))
     {
+        // A manual full sync is also the migration/repair path for the static
+        // dashboard index. Refresh it even when accounting itself is unchanged.
+        if full {
+            github
+                .refresh_dashboard_index()
+                .context("failed to refresh the dashboard device index")?;
+        }
         if !quiet {
             println!(
                 "No usage changes on {}; GitHub snapshot unchanged.",
@@ -204,8 +217,10 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
     }
 
     let envelope = crypto::encrypt_ledger(&ledger, &config.dashboard_key)?;
-    let github = GithubClient::new(config.repo.clone(), config.github_token.clone())?;
     let branch = github.replace_snapshot(&config.device_id, &envelope)?;
+    github
+        .refresh_dashboard_index()
+        .context("failed to refresh the dashboard device index")?;
     if !quiet {
         println!("Synced {} ({mode})", config.device_name);
         println!("  Branch: {branch}");
