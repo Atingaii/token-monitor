@@ -48,6 +48,7 @@ jobs:
         working-directory: web-ui
         run: |
           python3 patch-pricing-policy.py
+          python3 patch-session-persistence.py
           grep -q "subscriptionSpeedMultiplier" src/app.tsx
           ! grep -q "FAST_SUBSCRIPTION_MULTIPLIER" src/app.tsx
           grep -q "使用统计" src/app.tsx
@@ -58,6 +59,12 @@ jobs:
           ! grep -q "repoBadge={dataset.repo}" src/app.tsx
           ! grep -q "pricingBadge={dataset.pricing.source}" src/app.tsx
           ! grep -q "Codex Fast: GPT-5.6/5.5 2.5×" src/app.tsx
+          grep -q "REMEMBERED_WORKSPACE_KEY_PREFIX" src/app.tsx
+          grep -q "loadDashboardWithKey" src/app.tsx
+          grep -q "rememberWorkspaceKey(next.repo, key)" src/app.tsx
+          grep -q "forgetRememberedWorkspaceKey(repoFromLocation())" src/app.tsx
+          grep -q "正在恢复登录" src/app.tsx
+          ! grep -q "const \[password, setPassword\]" src/app.tsx
           test -s public/token-monitor-icon.svg
 
       - name: Install dashboard dependencies
