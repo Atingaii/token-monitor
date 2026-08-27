@@ -1,12 +1,14 @@
 #!/bin/sh
 set -eu
 
-DEFAULT_RELEASE_BASE="https://github.com/Atingaii/token-monitor/releases/download/v1.1.0"
-API_ASSET_BASE="https://api.github.com/repos/Atingaii/token-monitor/releases/assets"
+REPO="Atingaii/token-monitor"
+TAG="v1.1.0"
+DEFAULT_RELEASE_BASE="https://github.com/$REPO/releases/download/$TAG"
+API_ASSET_BASE="https://api.github.com/repos/$REPO/releases/assets"
 BASE="${TOKEN_MONITOR_RELEASE_BASE:-$DEFAULT_RELEASE_BASE}"
+
 OS="$(uname -s)"
 ARCH="$(uname -m)"
-
 case "$OS" in
   Darwin) PLATFORM="macos" ;;
   Linux) PLATFORM="linux" ;;
@@ -21,28 +23,12 @@ esac
 STEM="token-monitor-${PLATFORM}-${ARCHIVE_ARCH}"
 ASSET="${STEM}.tar.gz"
 CHECKSUM="${STEM}.sha256"
-
 case "$STEM" in
-  token-monitor-linux-aarch64)
-    ASSET_ID="531094676"
-    CHECKSUM_ID="531094680"
-    ;;
-  token-monitor-linux-x86_64)
-    ASSET_ID="531094678"
-    CHECKSUM_ID="531094677"
-    ;;
-  token-monitor-macos-aarch64)
-    ASSET_ID="531094694"
-    CHECKSUM_ID="531094679"
-    ;;
-  token-monitor-macos-x86_64)
-    ASSET_ID="531094696"
-    CHECKSUM_ID="531094693"
-    ;;
-  *)
-    echo "No release asset mapping for $STEM" >&2
-    exit 1
-    ;;
+  token-monitor-linux-aarch64) ASSET_ID=531094676; CHECKSUM_ID=531094680 ;;
+  token-monitor-linux-x86_64) ASSET_ID=531094678; CHECKSUM_ID=531094677 ;;
+  token-monitor-macos-aarch64) ASSET_ID=531094694; CHECKSUM_ID=531094679 ;;
+  token-monitor-macos-x86_64) ASSET_ID=531094696; CHECKSUM_ID=531094693 ;;
+  *) echo "No release asset mapping for $STEM" >&2; exit 1 ;;
 esac
 
 path_has_dir() {
@@ -61,29 +47,12 @@ choose_install_dir() {
     printf '%s\n' "$TOKEN_MONITOR_INSTALL_DIR"
     return
   fi
-
   for candidate in "$HOME/.local/bin" "$HOME/bin" "$HOME/.cargo/bin"; do
     if path_has_dir "$candidate"; then
       printf '%s\n' "$candidate"
       return
     fi
   done
-
-  old_ifs=$IFS
-  IFS=:
-  for candidate in ${PATH:-}; do
-    case "$candidate" in
-      "$HOME"/*)
-        if [ -d "$candidate" ] && [ -w "$candidate" ]; then
-          IFS=$old_ifs
-          printf '%s\n' "$candidate"
-          return
-        fi
-        ;;
-    esac
-  done
-  IFS=$old_ifs
-
   printf '%s\n' "$HOME/.local/bin"
 }
 
@@ -94,16 +63,28 @@ TMP="$(mktemp -d 2>/dev/null || mktemp -d -t token-monitor)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$INSTALL_DIR"
 
+resolve_github_token() {
+  for name in TOKEN_MONITOR_GITHUB_TOKEN GITHUB_TOKEN GH_TOKEN; do
+    eval "value=\${$name:-}"
+    if [ -n "${value:-}" ]; then
+      printf '%s' "$value"
+      return 0
+    fi
+  done
+  if command -v gh >/dev/null 2>&1; then
+    gh auth token 2>/dev/null || true
+  fi
+}
+
 download_direct() {
   url="$1"
   output="$2"
   if command -v curl >/dev/null 2>&1; then
-    curl -fL --retry 3 --connect-timeout 15 "$url" -o "$output"
+    curl -fL --retry 2 --connect-timeout 15 "$url" -o "$output"
   elif command -v wget >/dev/null 2>&1; then
     wget -q "$url" -O "$output"
   else
-    echo "curl or wget is required to download Token Monitor." >&2
-    exit 1
+    return 1
   fi
 }
 
@@ -111,61 +92,49 @@ download_api_asset() {
   asset_id="$1"
   output="$2"
   url="$API_ASSET_BASE/$asset_id"
+  token="$(resolve_github_token)"
 
   if command -v curl >/dev/null 2>&1; then
-    github_token=""
-    if command -v gh >/dev/null 2>&1; then
-      github_token="$(gh auth token 2>/dev/null || true)"
-    fi
-
-    if [ -n "$github_token" ]; then
-      if curl -fL --retry 3 --connect-timeout 15 \
+    if [ -n "$token" ]; then
+      curl -fL --retry 2 --connect-timeout 15 \
         -H 'Accept: application/octet-stream' \
+        -H 'X-GitHub-Api-Version: 2022-11-28' \
         -H 'User-Agent: token-monitor-installer/1.1.0' \
-        -H "Authorization: Bearer $github_token" \
-        "$url" -o "$output"; then
-        return 0
-      fi
+        -H "Authorization: Bearer $token" \
+        "$url" -o "$output" && return 0
     else
-      if curl -fL --retry 3 --connect-timeout 15 \
+      curl -fL --retry 2 --connect-timeout 15 \
         -H 'Accept: application/octet-stream' \
+        -H 'X-GitHub-Api-Version: 2022-11-28' \
         -H 'User-Agent: token-monitor-installer/1.1.0' \
-        "$url" -o "$output"; then
-        return 0
-      fi
+        "$url" -o "$output" && return 0
     fi
   fi
+  return 1
+}
 
-  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    if gh api \
-      -H 'Accept: application/octet-stream' \
-      "/repos/Atingaii/token-monitor/releases/assets/$asset_id" > "$output"; then
-      return 0
-    fi
+download_release_file() {
+  name="$1"
+  asset_id="$2"
+  output="$3"
+
+  if [ -n "${TOKEN_MONITOR_RELEASE_BASE:-}" ]; then
+    download_direct "$BASE/$name" "$output" && return 0
+  else
+    # Prefer the normal public release URL. Some networks return a misleading 404;
+    # fall back to GitHub's release-asset API, optionally using the user's gh login.
+    download_direct "$DEFAULT_RELEASE_BASE/$name" "$output" && return 0
+    echo "Direct GitHub Release download failed; trying Releases API..." >&2
+    download_api_asset "$asset_id" "$output" && return 0
   fi
 
-  if command -v wget >/dev/null 2>&1; then
-    if wget -q \
-      --header='Accept: application/octet-stream' \
-      --header='User-Agent: token-monitor-installer/1.1.0' \
-      "$url" -O "$output"; then
-      return 0
-    fi
-  fi
-
-  echo "Failed to download GitHub release asset $asset_id." >&2
-  echo "Check GitHub connectivity or run 'gh auth login', then retry." >&2
+  echo "Failed to download $name." >&2
+  echo "If GitHub returned 403, run 'gh auth login' once and retry." >&2
   exit 1
 }
 
-if [ -n "${TOKEN_MONITOR_RELEASE_BASE:-}" ]; then
-  download_direct "$BASE/$ASSET" "$TMP/$ASSET"
-  download_direct "$BASE/$CHECKSUM" "$TMP/$CHECKSUM"
-else
-  echo "Downloading $ASSET from GitHub Releases API..."
-  download_api_asset "$ASSET_ID" "$TMP/$ASSET"
-  download_api_asset "$CHECKSUM_ID" "$TMP/$CHECKSUM"
-fi
+download_release_file "$ASSET" "$ASSET_ID" "$TMP/$ASSET"
+download_release_file "$CHECKSUM" "$CHECKSUM_ID" "$TMP/$CHECKSUM"
 
 if command -v sha256sum >/dev/null 2>&1; then
   (cd "$TMP" && sha256sum -c "$CHECKSUM")
@@ -184,42 +153,38 @@ else
   chmod 0755 "$INSTALL_DIR/token-monitor"
 fi
 
-if ! "$INSTALL_DIR/token-monitor" --version; then
-  echo "The downloaded binary could not run on this system." >&2
-  if [ "$PLATFORM" = "linux" ]; then
-    echo "The v1.1 Linux build is static musl and should not require a recent glibc." >&2
-    echo "Please report your distribution, kernel and architecture if this still fails." >&2
-  fi
-  exit 1
-fi
+BINARY="$INSTALL_DIR/token-monitor"
+"$BINARY" --version
 
 if [ "$WAS_ON_PATH" -eq 0 ]; then
   SHELL_NAME="$(basename "${SHELL:-sh}")"
   case "$SHELL_NAME" in
     zsh) PROFILE="$HOME/.zshrc" ;;
-    bash)
-      if [ -f "$HOME/.bashrc" ]; then PROFILE="$HOME/.bashrc"; else PROFILE="$HOME/.profile"; fi
-      ;;
+    bash) if [ -f "$HOME/.bashrc" ]; then PROFILE="$HOME/.bashrc"; else PROFILE="$HOME/.profile"; fi ;;
     *) PROFILE="$HOME/.profile" ;;
   esac
   [ -e "$PROFILE" ] || : > "$PROFILE"
-  LINE="export PATH=\"$INSTALL_DIR:\$PATH\" # token-monitor"
-  if ! grep -F "# token-monitor" "$PROFILE" >/dev/null 2>&1; then
-    printf '\n%s\n' "$LINE" >> "$PROFILE"
+  if ! grep -F '# token-monitor' "$PROFILE" >/dev/null 2>&1; then
+    printf '\nexport PATH="%s:$PATH" # token-monitor\n' "$INSTALL_DIR" >> "$PROFILE"
   fi
 fi
 
 echo
-echo "Installed: $INSTALL_DIR/token-monitor"
-if [ "$WAS_ON_PATH" -eq 1 ]; then
-  echo "First device: token-monitor setup"
-  echo "Existing v1.0 device: token-monitor password && token-monitor sync --full"
-  echo "Additional device: paste the 'token-monitor join ...' command printed by an existing device"
+echo "Installed: $BINARY"
+if "$BINARY" status >/dev/null 2>&1; then
+  echo "Existing Token Monitor configuration detected on this machine."
+  echo "Upgrade/migrate it with:"
+  printf "  '%s' password\n" "$BINARY"
+  printf "  '%s' sync --full\n" "$BINARY"
 else
-  echo "Your current parent shell cannot inherit PATH changes from a curl|sh installer."
-  echo "Run setup immediately with:"
-  printf "  '%s/token-monitor' setup\n" "$INSTALL_DIR"
-  echo "Existing v1.0 device can migrate with:"
-  printf "  '%s/token-monitor' password && '%s/token-monitor' sync --full\n" "$INSTALL_DIR" "$INSTALL_DIR"
-  echo "New terminals will also find 'token-monitor' through your shell profile."
+  echo "No local Token Monitor configuration detected on this machine."
+  echo "If this is the FIRST device for a new workspace:"
+  printf "  '%s' setup\n" "$BINARY"
+  echo "If another device already owns the workspace, DO NOT run setup here."
+  echo "Run 'token-monitor invite' on the existing device and paste its complete"
+  echo "'token-monitor join ...' command on this machine."
+fi
+
+if [ "$WAS_ON_PATH" -eq 0 ]; then
+  echo "A new terminal will find 'token-monitor' through your shell profile."
 fi
