@@ -1,0 +1,45 @@
+name: Analytics Workbench Check
+
+on:
+  push:
+    branches: [fix/analytics-workbench]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-ui/package.json
+      - name: Prepare source
+        shell: bash
+        run: |
+          if [ ! -s web-ui/src/app.tsx ]; then
+            cat web-ui/src/app.part.* | base64 -d | gunzip > web-ui/src/app.tsx
+          fi
+          test -s web-ui/src/app.tsx
+      - name: Apply dashboard patches
+        working-directory: web-ui
+        run: |
+          python3 patch-pricing-policy.py
+          python3 patch-session-persistence.py
+          python3 patch-device-index.py
+          python3 patch-analytics-workbench.py
+          grep -q "分析工作台" src/app.tsx
+          grep -q "结构贡献" src/app.tsx
+          grep -q "设备 × 模型用量矩阵" src/app.tsx
+          grep -q "高消耗组合" src/app.tsx
+      - name: Install dependencies
+        working-directory: web-ui
+        run: npm install --no-audit --no-fund
+      - name: Typecheck and build
+        working-directory: web-ui
+        run: |
+          npm run typecheck
+          npm run build
