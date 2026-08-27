@@ -1,9 +1,10 @@
 name: Rust CLI CI
 
+# Full six-platform verification is intentionally manual. The dashboard has its
+# own lightweight deployment/validation path, so ordinary web/docs/installer
+# fixes are not blocked by the expensive native matrix.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -138,6 +139,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: JavaScript syntax
         run: |
+          node --check web/github-api-shim.js
           node --check web/analytics.js
           node --check web/app.js
       - name: Analytics unit tests
