@@ -1,7 +1,9 @@
 #!/bin/sh
 set -eu
 
-BASE="${TOKEN_MONITOR_RELEASE_BASE:-https://github.com/Atingaii/token-monitor/releases/download/v1.1.0}"
+DEFAULT_RELEASE_BASE="https://github.com/Atingaii/token-monitor/releases/download/v1.1.0"
+API_ASSET_BASE="https://api.github.com/repos/Atingaii/token-monitor/releases/assets"
+BASE="${TOKEN_MONITOR_RELEASE_BASE:-$DEFAULT_RELEASE_BASE}"
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
@@ -19,6 +21,29 @@ esac
 STEM="token-monitor-${PLATFORM}-${ARCHIVE_ARCH}"
 ASSET="${STEM}.tar.gz"
 CHECKSUM="${STEM}.sha256"
+
+case "$STEM" in
+  token-monitor-linux-aarch64)
+    ASSET_ID="531094676"
+    CHECKSUM_ID="531094680"
+    ;;
+  token-monitor-linux-x86_64)
+    ASSET_ID="531094678"
+    CHECKSUM_ID="531094677"
+    ;;
+  token-monitor-macos-aarch64)
+    ASSET_ID="531094694"
+    CHECKSUM_ID="531094679"
+    ;;
+  token-monitor-macos-x86_64)
+    ASSET_ID="531094696"
+    CHECKSUM_ID="531094693"
+    ;;
+  *)
+    echo "No release asset mapping for $STEM" >&2
+    exit 1
+    ;;
+esac
 
 path_has_dir() {
   wanted="$1"
@@ -69,7 +94,7 @@ TMP="$(mktemp -d 2>/dev/null || mktemp -d -t token-monitor)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$INSTALL_DIR"
 
-download() {
+download_direct() {
   url="$1"
   output="$2"
   if command -v curl >/dev/null 2>&1; then
@@ -82,8 +107,36 @@ download() {
   fi
 }
 
-download "$BASE/$ASSET" "$TMP/$ASSET"
-download "$BASE/$CHECKSUM" "$TMP/$CHECKSUM"
+download_api_asset() {
+  asset_id="$1"
+  output="$2"
+  url="$API_ASSET_BASE/$asset_id"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL --retry 3 --connect-timeout 15 \
+      -H 'Accept: application/octet-stream' \
+      -H 'X-GitHub-Api-Version: 2022-11-28' \
+      -H 'User-Agent: token-monitor-installer/1.1.0' \
+      "$url" -o "$output"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q \
+      --header='Accept: application/octet-stream' \
+      --header='X-GitHub-Api-Version: 2022-11-28' \
+      --header='User-Agent: token-monitor-installer/1.1.0' \
+      "$url" -O "$output"
+  else
+    echo "curl or wget is required to download Token Monitor." >&2
+    exit 1
+  fi
+}
+
+if [ -n "${TOKEN_MONITOR_RELEASE_BASE:-}" ]; then
+  download_direct "$BASE/$ASSET" "$TMP/$ASSET"
+  download_direct "$BASE/$CHECKSUM" "$TMP/$CHECKSUM"
+else
+  echo "Downloading $ASSET from GitHub Releases API..."
+  download_api_asset "$ASSET_ID" "$TMP/$ASSET"
+  download_api_asset "$CHECKSUM_ID" "$TMP/$CHECKSUM"
+fi
 
 if command -v sha256sum >/dev/null 2>&1; then
   (cd "$TMP" && sha256sum -c "$CHECKSUM")
