@@ -42,6 +42,13 @@ jobs:
           grep -q "FAST_SUBSCRIPTION_MULTIPLIER = 2.5" web-ui/src/app.tsx
           grep -q "model_prices_and_context_window.json" web-ui/src/app.tsx
 
+      - name: Apply official speed-pricing policy
+        working-directory: web-ui
+        run: |
+          python3 patch-pricing-policy.py
+          grep -q "subscriptionSpeedMultiplier" src/app.tsx
+          ! grep -q "FAST_SUBSCRIPTION_MULTIPLIER" src/app.tsx
+
       - name: Install dashboard dependencies
         working-directory: web-ui
         run: npm install --no-audit --no-fund
