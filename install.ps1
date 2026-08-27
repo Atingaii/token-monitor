@@ -1,8 +1,10 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-$DefaultReleaseBase = 'https://github.com/Atingaii/token-monitor/releases/download/v1.1.0'
-$ApiAssetBase = 'https://api.github.com/repos/Atingaii/token-monitor/releases/assets'
+$Repo = 'Atingaii/token-monitor'
+$Tag = 'v1.1.0'
+$DefaultReleaseBase = "https://github.com/$Repo/releases/download/$Tag"
+$ApiAssetBase = "https://api.github.com/repos/$Repo/releases/assets"
 $Base = if ($env:TOKEN_MONITOR_RELEASE_BASE) { $env:TOKEN_MONITOR_RELEASE_BASE.TrimEnd('/') } else { $DefaultReleaseBase }
 
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
@@ -54,6 +56,7 @@ if ([string]::IsNullOrWhiteSpace($LocalAppData)) {
   if ([string]::IsNullOrWhiteSpace($profileHome)) { throw 'Cannot determine the current Windows user profile directory.' }
   $LocalAppData = Join-Path $profileHome 'AppData\Local'
 }
+
 $InstallDir = if ($env:TOKEN_MONITOR_INSTALL_DIR) { $env:TOKEN_MONITOR_INSTALL_DIR } else { Join-Path $LocalAppData 'TokenMonitor\bin' }
 $InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 $Temp = Join-Path ([System.IO.Path]::GetTempPath()) ("token-monitor-" + [Guid]::NewGuid().ToString('N'))
@@ -65,26 +68,64 @@ function Normalize-PathEntry([string]$Value) {
   catch { return $Value.TrimEnd('\').ToLowerInvariant() }
 }
 
-function Get-GitHubApiAsset([string]$Id, [string]$OutFile) {
+function Get-GitHubToken {
+  foreach ($name in @('TOKEN_MONITOR_GITHUB_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN')) {
+    $value = [Environment]::GetEnvironmentVariable($name)
+    if (-not [string]::IsNullOrWhiteSpace($value)) { return $value.Trim() }
+  }
+  $gh = Get-Command gh -ErrorAction SilentlyContinue
+  if ($null -ne $gh) {
+    try {
+      $token = (& gh auth token 2>$null | Out-String).Trim()
+      if (-not [string]::IsNullOrWhiteSpace($token)) { return $token }
+    } catch {}
+  }
+  return $null
+}
+
+function Download-Direct([string]$Url, [string]$OutFile) {
+  Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $OutFile
+}
+
+function Download-ApiAsset([string]$Id, [string]$OutFile) {
   $Headers = @{
     Accept = 'application/octet-stream'
     'X-GitHub-Api-Version' = '2022-11-28'
     'User-Agent' = 'token-monitor-installer/1.1.0'
   }
+  $token = Get-GitHubToken
+  if (-not [string]::IsNullOrWhiteSpace($token)) {
+    $Headers['Authorization'] = "Bearer $token"
+  }
   Invoke-WebRequest -UseBasicParsing -Headers $Headers -Uri "$ApiAssetBase/$Id" -OutFile $OutFile
+}
+
+function Download-ReleaseFile([string]$Name, [string]$Id, [string]$OutFile) {
+  if ($env:TOKEN_MONITOR_RELEASE_BASE) {
+    Download-Direct "$Base/$Name" $OutFile
+    return
+  }
+
+  try {
+    Download-Direct "$DefaultReleaseBase/$Name" $OutFile
+    return
+  } catch {
+    Write-Host 'Direct GitHub Release download failed; trying Releases API...'
+  }
+
+  try {
+    Download-ApiAsset $Id $OutFile
+    return
+  } catch {
+    throw "Failed to download $Name. If GitHub returned 403, run 'gh auth login' once and retry. $($_.Exception.Message)"
+  }
 }
 
 try {
   $Zip = Join-Path $Temp $Asset
   $ChecksumPath = Join-Path $Temp $Checksum
-  if ($env:TOKEN_MONITOR_RELEASE_BASE) {
-    Invoke-WebRequest -UseBasicParsing -Uri "$Base/$Asset" -OutFile $Zip
-    Invoke-WebRequest -UseBasicParsing -Uri "$Base/$Checksum" -OutFile $ChecksumPath
-  } else {
-    Write-Host "Downloading $Asset from GitHub Releases API..."
-    Get-GitHubApiAsset $AssetId $Zip
-    Get-GitHubApiAsset $ChecksumId $ChecksumPath
-  }
+  Download-ReleaseFile $Asset $AssetId $Zip
+  Download-ReleaseFile $Checksum $ChecksumId $ChecksumPath
 
   $Expected = ((Get-Content -Raw $ChecksumPath).Trim() -split '\s+')[0].ToLowerInvariant()
   $Actual = (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -105,8 +146,7 @@ try {
   $UserParts = @($UserPath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
   $UserNormalized = @($UserParts | ForEach-Object { Normalize-PathEntry $_ })
   if ($UserNormalized -notcontains $Wanted) {
-    $NewPath = (($UserParts + $InstallDir) -join ';')
-    [Environment]::SetEnvironmentVariable('Path', $NewPath, 'User')
+    [Environment]::SetEnvironmentVariable('Path', (($UserParts + $InstallDir) -join ';'), 'User')
     Write-Host "Added $InstallDir to your user PATH."
   }
 
@@ -118,14 +158,21 @@ try {
   }
 
   Write-Host "`nInstalled: $Binary"
-  Write-Host 'First device:'
-  Write-Host '  token-monitor setup'
-  Write-Host 'Existing v1.0 device:'
-  Write-Host '  token-monitor password'
-  Write-Host '  token-monitor sync --full'
-  Write-Host 'If this installer ran in a child PowerShell and PATH is not visible yet, use:'
-  Write-Host "  & `"$Binary`" setup"
-  Write-Host "Additional device: paste the 'token-monitor join ...' command printed by an existing device"
+  & $Binary status *> $null
+  $Configured = ($LASTEXITCODE -eq 0)
+  if ($Configured) {
+    Write-Host 'Existing Token Monitor configuration detected on this machine.'
+    Write-Host 'Upgrade/migrate it with:'
+    Write-Host '  token-monitor password'
+    Write-Host '  token-monitor sync --full'
+  } else {
+    Write-Host 'No local Token Monitor configuration detected on this machine.'
+    Write-Host 'If this is the FIRST device for a new workspace:'
+    Write-Host '  token-monitor setup'
+    Write-Host 'If another device already owns the workspace, DO NOT run setup here.'
+    Write-Host "Run 'token-monitor invite' on the existing device and paste its complete"
+    Write-Host "'token-monitor join ...' command on this machine."
+  }
 }
 finally {
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Temp
