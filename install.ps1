@@ -2,9 +2,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $Repo = 'Atingaii/token-monitor'
-$Tag = 'v1.1.0'
-$DefaultReleaseBase = "https://github.com/$Repo/releases/download/$Tag"
-$ApiAssetBase = "https://api.github.com/repos/$Repo/releases/assets"
+$DefaultReleaseBase = "https://github.com/$Repo/releases/latest/download"
 $Base = if ($env:TOKEN_MONITOR_RELEASE_BASE) { $env:TOKEN_MONITOR_RELEASE_BASE.TrimEnd('/') } else { $DefaultReleaseBase }
 
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
@@ -32,16 +30,8 @@ function Get-TokenMonitorArchitecture {
 
 $Arch = Get-TokenMonitorArchitecture
 switch ($Arch) {
-  'x64' {
-    $AssetArch = 'x86_64'
-    $AssetId = '531094714'
-    $ChecksumId = '531094708'
-  }
-  'arm64' {
-    $AssetArch = 'aarch64'
-    $AssetId = '531094703'
-    $ChecksumId = '531094700'
-  }
+  'x64' { $AssetArch = 'x86_64' }
+  'arm64' { $AssetArch = 'aarch64' }
   default { throw "Unsupported Windows architecture: $Arch (Token Monitor requires 64-bit Windows)" }
 }
 
@@ -87,45 +77,43 @@ function Download-Direct([string]$Url, [string]$OutFile) {
   Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $OutFile
 }
 
-function Download-ApiAsset([string]$Id, [string]$OutFile) {
-  $Headers = @{
-    Accept = 'application/octet-stream'
-    'X-GitHub-Api-Version' = '2022-11-28'
-    'User-Agent' = 'token-monitor-installer/1.1.0'
+function Download-WithGitHubCli([string]$Name, [string]$OutFile) {
+  $gh = Get-Command gh -ErrorAction SilentlyContinue
+  if ($null -eq $gh) { return $false }
+
+  $savedGhToken = $env:GH_TOKEN
+  try {
+    $token = Get-GitHubToken
+    if (-not [string]::IsNullOrWhiteSpace($token)) { $env:GH_TOKEN = $token }
+    & gh release download --repo $Repo --pattern $Name --output $OutFile --clobber 2>$null
+    return ($LASTEXITCODE -eq 0)
+  } catch {
+    return $false
+  } finally {
+    $env:GH_TOKEN = $savedGhToken
   }
-  $token = Get-GitHubToken
-  if (-not [string]::IsNullOrWhiteSpace($token)) {
-    $Headers['Authorization'] = "Bearer $token"
-  }
-  Invoke-WebRequest -UseBasicParsing -Headers $Headers -Uri "$ApiAssetBase/$Id" -OutFile $OutFile
 }
 
-function Download-ReleaseFile([string]$Name, [string]$Id, [string]$OutFile) {
-  if ($env:TOKEN_MONITOR_RELEASE_BASE) {
+function Download-ReleaseFile([string]$Name, [string]$OutFile) {
+  try {
     Download-Direct "$Base/$Name" $OutFile
     return
+  } catch {
+    if ($env:TOKEN_MONITOR_RELEASE_BASE) {
+      throw "Failed to download $Name from $Base. $($_.Exception.Message)"
+    }
+    Write-Host 'Direct latest-release download failed; trying GitHub CLI...'
   }
 
-  try {
-    Download-Direct "$DefaultReleaseBase/$Name" $OutFile
-    return
-  } catch {
-    Write-Host 'Direct GitHub Release download failed; trying Releases API...'
-  }
-
-  try {
-    Download-ApiAsset $Id $OutFile
-    return
-  } catch {
-    throw "Failed to download $Name. If GitHub returned 403, run 'gh auth login' once and retry. $($_.Exception.Message)"
-  }
+  if (Download-WithGitHubCli $Name $OutFile) { return }
+  throw "Failed to download $Name. If GitHub access is restricted, run 'gh auth login' once and retry."
 }
 
 try {
   $Zip = Join-Path $Temp $Asset
   $ChecksumPath = Join-Path $Temp $Checksum
-  Download-ReleaseFile $Asset $AssetId $Zip
-  Download-ReleaseFile $Checksum $ChecksumId $ChecksumPath
+  Download-ReleaseFile $Asset $Zip
+  Download-ReleaseFile $Checksum $ChecksumPath
 
   $Expected = ((Get-Content -Raw $ChecksumPath).Trim() -split '\s+')[0].ToLowerInvariant()
   $Actual = (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -162,8 +150,7 @@ try {
   $Configured = ($LASTEXITCODE -eq 0)
   if ($Configured) {
     Write-Host 'Existing Token Monitor configuration detected on this machine.'
-    Write-Host 'Upgrade/migrate it with:'
-    Write-Host '  token-monitor password'
+    Write-Host 'Refresh historical accounting after an upgrade with:'
     Write-Host '  token-monitor sync --full'
   } else {
     Write-Host 'No local Token Monitor configuration detected on this machine.'
