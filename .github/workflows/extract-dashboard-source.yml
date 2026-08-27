@@ -3,7 +3,7 @@ name: Extract Dashboard Source
 on:
   push:
     branches:
-      - fix/dashboard-clean-branding
+      - main
     paths:
       - '.github/workflows/extract-dashboard-source.yml'
       - 'web-ui/src/app.part.*'
@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: fix/dashboard-clean-branding
+          ref: main
 
       - name: Reconstruct editable dashboard source
         shell: bash
@@ -35,4 +35,4 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add web-ui/src/app.tsx
           git commit -m 'chore(web): expose editable Figma dashboard source'
-          git push origin HEAD:fix/dashboard-clean-branding
+          git push origin HEAD:main
