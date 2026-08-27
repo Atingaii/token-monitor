@@ -192,6 +192,7 @@ for required in [
     "REMEMBERED_WORKSPACE_KEY_PREFIX",
     "loadDashboardWithKey",
     "unlockDashboard",
+    "const [workspaceKeyValue, setWorkspaceKeyValue]",
     "rememberWorkspaceKey(next.repo, key)",
     "forgetRememberedWorkspaceKey(repoFromLocation())",
     "正在恢复登录...",
@@ -199,7 +200,12 @@ for required in [
     if required not in text:
         raise SystemExit(f"persistent-login patch missing: {required}")
 
-if "const [password, setPassword]" in text:
-    raise SystemExit("plaintext password state survived persistent-login patch")
+for forbidden in [
+    "setPassword(nextPassword)",
+    "loadDashboard(password)",
+    "if (!password) return;",
+]:
+    if forbidden in text:
+        raise SystemExit(f"App still depends on plaintext password state: {forbidden}")
 
 path.write_text(text, encoding="utf-8")
