@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::crypto::generate_key;
 use crate::model::CURRENT_LEDGER_SCHEMA_VERSION;
 
-pub const DASHBOARD_ORIGIN: &str = "https://token-monitor-cuidongshan350-1312.vercel.app/";
+pub const DASHBOARD_ORIGIN: &str = "https://atingaii.github.io/token-monitor/";
 pub const DEFAULT_DASHBOARD_REPO: &str = "Atingaii/token-monitor";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,10 +187,6 @@ pub fn read_cached_ledger() -> Result<Option<crate::model::Ledger>> {
         Ok(data) => {
             let ledger: crate::model::Ledger =
                 serde_json::from_slice(&data).context("invalid local ledger cache")?;
-            // Pricing semantics are persisted inside each row. Reusing an older
-            // schema during an incremental scan would preserve stale historical
-            // prices. Treat older caches as absent so the first run after an
-            // accounting-schema migration performs one full rescan/reprice.
             if ledger.schema_version < CURRENT_LEDGER_SCHEMA_VERSION {
                 return Ok(None);
             }
@@ -257,7 +253,7 @@ mod tests {
         let url = dashboard_url(&config);
         assert_eq!(
             url,
-            "https://token-monitor-cuidongshan350-1312.vercel.app/?repo=owner/repo"
+            "https://atingaii.github.io/token-monitor/?repo=owner/repo"
         );
         assert!(!url.contains(&config.dashboard_key));
         assert!(!url.contains("#key="));
