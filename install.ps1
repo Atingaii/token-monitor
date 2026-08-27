@@ -1,7 +1,9 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-$Base = if ($env:TOKEN_MONITOR_RELEASE_BASE) { $env:TOKEN_MONITOR_RELEASE_BASE.TrimEnd('/') } else { 'https://github.com/Atingaii/token-monitor/releases/download/v1.1.0' }
+$DefaultReleaseBase = 'https://github.com/Atingaii/token-monitor/releases/download/v1.1.0'
+$ApiAssetBase = 'https://api.github.com/repos/Atingaii/token-monitor/releases/assets'
+$Base = if ($env:TOKEN_MONITOR_RELEASE_BASE) { $env:TOKEN_MONITOR_RELEASE_BASE.TrimEnd('/') } else { $DefaultReleaseBase }
 
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
   try {
@@ -28,8 +30,16 @@ function Get-TokenMonitorArchitecture {
 
 $Arch = Get-TokenMonitorArchitecture
 switch ($Arch) {
-  'x64' { $AssetArch = 'x86_64' }
-  'arm64' { $AssetArch = 'aarch64' }
+  'x64' {
+    $AssetArch = 'x86_64'
+    $AssetId = '531094714'
+    $ChecksumId = '531094708'
+  }
+  'arm64' {
+    $AssetArch = 'aarch64'
+    $AssetId = '531094703'
+    $ChecksumId = '531094700'
+  }
   default { throw "Unsupported Windows architecture: $Arch (Token Monitor requires 64-bit Windows)" }
 }
 
@@ -55,11 +65,26 @@ function Normalize-PathEntry([string]$Value) {
   catch { return $Value.TrimEnd('\').ToLowerInvariant() }
 }
 
+function Get-GitHubApiAsset([string]$Id, [string]$OutFile) {
+  $Headers = @{
+    Accept = 'application/octet-stream'
+    'X-GitHub-Api-Version' = '2022-11-28'
+    'User-Agent' = 'token-monitor-installer/1.1.0'
+  }
+  Invoke-WebRequest -UseBasicParsing -Headers $Headers -Uri "$ApiAssetBase/$Id" -OutFile $OutFile
+}
+
 try {
   $Zip = Join-Path $Temp $Asset
   $ChecksumPath = Join-Path $Temp $Checksum
-  Invoke-WebRequest -UseBasicParsing -Uri "$Base/$Asset" -OutFile $Zip
-  Invoke-WebRequest -UseBasicParsing -Uri "$Base/$Checksum" -OutFile $ChecksumPath
+  if ($env:TOKEN_MONITOR_RELEASE_BASE) {
+    Invoke-WebRequest -UseBasicParsing -Uri "$Base/$Asset" -OutFile $Zip
+    Invoke-WebRequest -UseBasicParsing -Uri "$Base/$Checksum" -OutFile $ChecksumPath
+  } else {
+    Write-Host "Downloading $Asset from GitHub Releases API..."
+    Get-GitHubApiAsset $AssetId $Zip
+    Get-GitHubApiAsset $ChecksumId $ChecksumPath
+  }
 
   $Expected = ((Get-Content -Raw $ChecksumPath).Trim() -split '\s+')[0].ToLowerInvariant()
   $Actual = (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLowerInvariant()
