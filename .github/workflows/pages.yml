@@ -50,12 +50,14 @@ jobs:
           python3 patch-pricing-policy.py
           python3 patch-session-persistence.py
           python3 patch-device-index.py
+          python3 patch-analytics-workbench.py
           grep -q "subscriptionSpeedMultiplier" src/app.tsx
           ! grep -q "FAST_SUBSCRIPTION_MULTIPLIER" src/app.tsx
-          grep -q "使用统计" src/app.tsx
-          grep -q "缓存命中率" src/app.tsx
-          grep -q "按设备" src/app.tsx
-          grep -q "按路由提供商" src/app.tsx
+          grep -q "分析工作台" src/app.tsx
+          grep -q "结构贡献" src/app.tsx
+          grep -q "设备 × 模型用量矩阵" src/app.tsx
+          grep -q "高消耗组合" src/app.tsx
+          grep -q "TOP 3 集中度" src/app.tsx
           ! grep -q "高级用量分析" src/app.tsx
           ! grep -q "repoBadge={dataset.repo}" src/app.tsx
           ! grep -q "pricingBadge={dataset.pricing.source}" src/app.tsx
