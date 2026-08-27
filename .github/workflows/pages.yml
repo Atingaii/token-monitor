@@ -28,6 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate static dashboard
         run: |
+          node --check web/github-api-shim.js
           node --check web/analytics.js
           node --check web/app.js
           node web/analytics.test.cjs
