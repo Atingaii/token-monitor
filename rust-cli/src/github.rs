@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::crypto::device_hash;
@@ -14,6 +14,8 @@ const API: &str = "https://api.github.com";
 const API_VERSION: &str = "2022-11-28";
 pub const UPSTREAM_REPO: &str = "Atingaii/token-monitor";
 pub const DASHBOARD_BRANCH: &str = "tm-dashboard";
+pub const DEVICE_INDEX_BRANCH: &str = "tm-index";
+const LEDGER_BRANCH_PREFIX: &str = "tm-ledger-";
 
 pub struct GithubClient {
     http: Client,
@@ -34,6 +36,11 @@ struct RefResponse {
     object: GitObject,
 }
 #[derive(Deserialize)]
+struct MatchingRefResponse {
+    #[serde(rename = "ref")]
+    reference: String,
+}
+#[derive(Deserialize)]
 struct UserResponse {
     login: String,
 }
@@ -48,6 +55,15 @@ struct RepositoryResponse {
     #[serde(default)]
     fork: bool,
     parent: Option<ParentResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DashboardDeviceIndex {
+    schema_version: u32,
+    kind: String,
+    branches: Vec<String>,
+    updated_at: String,
 }
 
 fn http_client() -> Result<Client> {
@@ -80,6 +96,17 @@ fn repo_is_upstream_fork(repository: &RepositoryResponse) -> bool {
             && repository.parent.as_ref().is_some_and(|parent| {
                 parent.full_name.eq_ignore_ascii_case(UPSTREAM_REPO)
             }))
+}
+
+fn normalize_ledger_branches(refs: Vec<MatchingRefResponse>) -> Vec<String> {
+    let mut branches = refs
+        .into_iter()
+        .filter_map(|item| item.reference.strip_prefix("refs/heads/").map(str::to_string))
+        .filter(|branch| branch.starts_with(LEDGER_BRANCH_PREFIX))
+        .collect::<Vec<_>>();
+    branches.sort();
+    branches.dedup();
+    branches
 }
 
 pub fn ensure_user_fork(token: &str) -> Result<String> {
@@ -165,7 +192,7 @@ impl GithubClient {
     }
 
     pub fn snapshot_branch(device_id: &str) -> String {
-        format!("tm-ledger-{}", device_hash(device_id))
+        format!("{LEDGER_BRANCH_PREFIX}{}", device_hash(device_id))
     }
 
     fn replace_root_snapshot(
@@ -240,6 +267,42 @@ impl GithubClient {
         Ok(())
     }
 
+    pub fn ledger_branches(&self) -> Result<Vec<String>> {
+        let refs: Vec<MatchingRefResponse> = checked(
+            self.request(
+                reqwest::Method::GET,
+                format!(
+                    "{API}/repos/{}/git/matching-refs/heads/{LEDGER_BRANCH_PREFIX}",
+                    self.repo
+                ),
+            )
+            .send()?,
+            "ledger branch discovery",
+        )?
+        .json()?;
+        Ok(normalize_ledger_branches(refs))
+    }
+
+    /// Publish the tiny plaintext index that lets static browsers discover
+    /// encrypted device branches without spending the anonymous GitHub REST
+    /// API rate limit. It contains branch names only; usage data remains inside
+    /// the AES-GCM encrypted per-device ledgers.
+    pub fn refresh_dashboard_index(&self) -> Result<String> {
+        let index = DashboardDeviceIndex {
+            schema_version: 1,
+            kind: "token-monitor-device-index".to_string(),
+            branches: self.ledger_branches()?,
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        };
+        self.replace_root_snapshot(
+            DEVICE_INDEX_BRANCH,
+            "index.json",
+            serde_json::to_string(&index)?,
+            "token-monitor device index".to_string(),
+        )?;
+        Ok(DEVICE_INDEX_BRANCH.to_string())
+    }
+
     pub fn replace_snapshot(
         &self,
         device_id: &str,
@@ -281,6 +344,7 @@ impl GithubClient {
             return Ok(());
         }
         checked(response, "snapshot branch deletion")?;
+        self.refresh_dashboard_index()?;
         Ok(())
     }
 }
@@ -303,8 +367,26 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_branch_is_separate_from_device_ledgers() {
+    fn dashboard_branches_are_separate_from_device_ledgers() {
         assert_eq!(DASHBOARD_BRANCH, "tm-dashboard");
+        assert_eq!(DEVICE_INDEX_BRANCH, "tm-index");
         assert_ne!(DASHBOARD_BRANCH, GithubClient::snapshot_branch("device"));
+        assert_ne!(DEVICE_INDEX_BRANCH, GithubClient::snapshot_branch("device"));
+    }
+
+    #[test]
+    fn matching_refs_are_normalized_and_sorted() {
+        let branches = normalize_ledger_branches(vec![
+            MatchingRefResponse {
+                reference: "refs/heads/tm-ledger-b".into(),
+            },
+            MatchingRefResponse {
+                reference: "refs/heads/not-a-ledger".into(),
+            },
+            MatchingRefResponse {
+                reference: "refs/heads/tm-ledger-a".into(),
+            },
+        ]);
+        assert_eq!(branches, vec!["tm-ledger-a", "tm-ledger-b"]);
     }
 }
