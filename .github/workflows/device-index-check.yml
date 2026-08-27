@@ -1,0 +1,48 @@
+name: Device Index Check
+
+on:
+  push:
+    branches: [fix/live-device-index]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-ui/package.json
+      - name: Prepare source
+        shell: bash
+        run: |
+          if [ ! -s web-ui/src/app.tsx ]; then
+            cat web-ui/src/app.part.* | base64 -d | gunzip > web-ui/src/app.tsx
+          fi
+          test -s web-ui/src/app.tsx
+      - name: Apply dashboard patches
+        working-directory: web-ui
+        run: |
+          python3 patch-pricing-policy.py
+          python3 patch-session-persistence.py
+          python3 patch-device-index.py
+          grep -q "const DEVICE_INDEX_BRANCH = 'tm-index'" src/app.tsx
+          grep -q 'DEVICE_INDEX_BRANCH}/index.json' src/app.tsx
+          grep -q "REMEMBERED_WORKSPACE_KEY_PREFIX" src/app.tsx
+      - name: Verify current live index
+        shell: bash
+        run: |
+          curl -fsSL --retry 2 "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/tm-index/index.json" -o /tmp/index.json
+          grep -q 'tm-ledger-fc02e35ceb9b7dd2' /tmp/index.json
+      - name: Install dependencies
+        working-directory: web-ui
+        run: npm install --no-audit --no-fund
+      - name: Typecheck and build
+        working-directory: web-ui
+        run: |
+          npm run typecheck
+          npm run build
