@@ -175,22 +175,26 @@ jobs:
         shell: bash
         env:
           TOKEN_MONITOR_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}
+          EXPECTED_TAG: ${{ needs.publish.outputs.tag }}
         run: |
           export TOKEN_MONITOR_INSTALL_DIR="$RUNNER_TEMP/token-monitor-bin"
           sh ./install.sh
-          "$TOKEN_MONITOR_INSTALL_DIR/token-monitor" --version | grep '1.1.0'
+          expected="${EXPECTED_TAG#v}"
+          "$TOKEN_MONITOR_INSTALL_DIR/token-monitor" --version | grep -F "$expected"
           "$TOKEN_MONITOR_INSTALL_DIR/token-monitor" clients >/dev/null
       - name: Install from published release (Windows PowerShell 7)
         if: runner.os == 'Windows'
         shell: pwsh
         env:
           TOKEN_MONITOR_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}
+          EXPECTED_TAG: ${{ needs.publish.outputs.tag }}
         run: |
           $env:TOKEN_MONITOR_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'token-monitor-bin-pwsh'
           ./install.ps1
           $binary = Join-Path $env:TOKEN_MONITOR_INSTALL_DIR 'token-monitor.exe'
           $version = & $binary --version
-          if ($LASTEXITCODE -ne 0 -or $version -notmatch '1\.1\.0') { throw "Unexpected version: $version" }
+          $expected = $env:EXPECTED_TAG.TrimStart('v')
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch [regex]::Escape($expected)) { throw "Unexpected version: $version" }
           & $binary clients | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'clients smoke test failed' }
       - name: Install from published release (Windows PowerShell 5.1)
@@ -198,12 +202,14 @@ jobs:
         shell: cmd
         env:
           TOKEN_MONITOR_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}
+          EXPECTED_TAG: ${{ needs.publish.outputs.tag }}
         run: >-
           powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command
           "$env:TOKEN_MONITOR_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'token-monitor-bin-wps51';
           & './install.ps1';
           $binary = Join-Path $env:TOKEN_MONITOR_INSTALL_DIR 'token-monitor.exe';
           $version = & $binary --version;
-          if ($LASTEXITCODE -ne 0 -or $version -notmatch '1\.1\.0') { throw ('Unexpected version: ' + $version) };
+          $expected = $env:EXPECTED_TAG.TrimStart('v');
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch [regex]::Escape($expected)) { throw ('Unexpected version: ' + $version) };
           & $binary clients | Out-Null;
           if ($LASTEXITCODE -ne 0) { throw 'clients smoke test failed' }"
