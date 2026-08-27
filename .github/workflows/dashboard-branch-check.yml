@@ -1,0 +1,53 @@
+name: Dashboard Branch Check
+
+on:
+  push:
+    branches:
+      - fix/dashboard-clean-branding
+    paths:
+      - 'web-ui/**'
+      - '.github/workflows/dashboard-branch-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-ui/package.json
+
+      - name: Apply dashboard policy
+        working-directory: web-ui
+        run: |
+          test -s src/app.tsx
+          python3 patch-pricing-policy.py
+          grep -q "subscriptionSpeedMultiplier" src/app.tsx
+          grep -q "使用统计" src/app.tsx
+          grep -q "缓存命中率" src/app.tsx
+          grep -q "按设备" src/app.tsx
+          grep -q "按路由提供商" src/app.tsx
+          ! grep -q "高级用量分析" src/app.tsx
+          ! grep -q "repoBadge={dataset.repo}" src/app.tsx
+          ! grep -q "pricingBadge={dataset.pricing.source}" src/app.tsx
+          test -s public/token-monitor-icon.svg
+
+      - name: Install dependencies
+        working-directory: web-ui
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck
+        working-directory: web-ui
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: web-ui
+        run: |
+          npm run build
+          test -s dist/token-monitor-icon.svg
