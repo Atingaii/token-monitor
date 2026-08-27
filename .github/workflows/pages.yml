@@ -49,6 +49,7 @@ jobs:
         run: |
           python3 patch-pricing-policy.py
           python3 patch-session-persistence.py
+          python3 patch-device-index.py
           grep -q "subscriptionSpeedMultiplier" src/app.tsx
           ! grep -q "FAST_SUBSCRIPTION_MULTIPLIER" src/app.tsx
           grep -q "使用统计" src/app.tsx
@@ -65,6 +66,8 @@ jobs:
           grep -q "rememberWorkspaceKey(next.repo, key)" src/app.tsx
           grep -q "forgetRememberedWorkspaceKey(repoFromLocation())" src/app.tsx
           grep -q "正在恢复登录" src/app.tsx
+          grep -q "const DEVICE_INDEX_BRANCH = 'tm-index'" src/app.tsx
+          grep -q "DEVICE_INDEX_BRANCH}/index.json" src/app.tsx
           ! grep -q "setPassword(nextPassword)" src/app.tsx
           ! grep -q "loadDashboard(password)" src/app.tsx
           test -s public/token-monitor-icon.svg
@@ -82,7 +85,12 @@ jobs:
       - name: Add zero-API device index fallback
         shell: bash
         run: |
-          cp web/device-index.json web-ui/dist/device-index.json
+          live_index="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/tm-index/index.json"
+          if curl -fsSL --retry 2 "$live_index" -o web-ui/dist/device-index.json; then
+            echo "Using live tm-index as the deployed fallback."
+          else
+            cp web/device-index.json web-ui/dist/device-index.json
+          fi
           test -s web-ui/dist/device-index.json
           test -s web-ui/dist/token-monitor-icon.svg
 
