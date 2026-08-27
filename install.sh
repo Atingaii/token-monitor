@@ -111,22 +111,51 @@ download_api_asset() {
   asset_id="$1"
   output="$2"
   url="$API_ASSET_BASE/$asset_id"
+
   if command -v curl >/dev/null 2>&1; then
-    curl -fL --retry 3 --connect-timeout 15 \
-      -H 'Accept: application/octet-stream' \
-      -H 'X-GitHub-Api-Version: 2022-11-28' \
-      -H 'User-Agent: token-monitor-installer/1.1.0' \
-      "$url" -o "$output"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -q \
-      --header='Accept: application/octet-stream' \
-      --header='X-GitHub-Api-Version: 2022-11-28' \
-      --header='User-Agent: token-monitor-installer/1.1.0' \
-      "$url" -O "$output"
-  else
-    echo "curl or wget is required to download Token Monitor." >&2
-    exit 1
+    github_token=""
+    if command -v gh >/dev/null 2>&1; then
+      github_token="$(gh auth token 2>/dev/null || true)"
+    fi
+
+    if [ -n "$github_token" ]; then
+      if curl -fL --retry 3 --connect-timeout 15 \
+        -H 'Accept: application/octet-stream' \
+        -H 'User-Agent: token-monitor-installer/1.1.0' \
+        -H "Authorization: Bearer $github_token" \
+        "$url" -o "$output"; then
+        return 0
+      fi
+    else
+      if curl -fL --retry 3 --connect-timeout 15 \
+        -H 'Accept: application/octet-stream' \
+        -H 'User-Agent: token-monitor-installer/1.1.0' \
+        "$url" -o "$output"; then
+        return 0
+      fi
+    fi
   fi
+
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    if gh api \
+      -H 'Accept: application/octet-stream' \
+      "/repos/Atingaii/token-monitor/releases/assets/$asset_id" > "$output"; then
+      return 0
+    fi
+  fi
+
+  if command -v wget >/dev/null 2>&1; then
+    if wget -q \
+      --header='Accept: application/octet-stream' \
+      --header='User-Agent: token-monitor-installer/1.1.0' \
+      "$url" -O "$output"; then
+      return 0
+    fi
+  fi
+
+  echo "Failed to download GitHub release asset $asset_id." >&2
+  echo "Check GitHub connectivity or run 'gh auth login', then retry." >&2
+  exit 1
 }
 
 if [ -n "${TOKEN_MONITOR_RELEASE_BASE:-}" ]; then
