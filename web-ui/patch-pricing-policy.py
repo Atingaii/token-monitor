@@ -14,7 +14,7 @@ replacement = r'''function subscriptionSpeedMultiplier(record: UsageRecord): num
     return 1;
   }
 
-  const model = normalizeModelId(record.model);
+  const model = normalizeModel(record.model);
   // OpenAI Codex / ChatGPT Work official Speed rate card (2026-08):
   // GPT-5.6 and GPT-5.5 Fast consume 2.5x Standard credits; GPT-5.4 consumes 2x.
   // API-key Priority/Fast is deliberately NOT inferred here: it has separate API pricing.
