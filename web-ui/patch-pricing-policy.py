@@ -26,24 +26,24 @@ text = text.replace(needle, replacement, 1)
 
 pattern = re.compile(
     r"const\s+tier\s*=\s*(?P<row>[A-Za-z_$][A-Za-z0-9_$]*)\.tier\.trim\(\)\.toLowerCase\(\);\s*"
-    r"const\s+tierMultiplier\s*=.*?FAST_SUBSCRIPTION_MULTIPLIER.*?;",
-    re.MULTILINE | re.DOTALL,
+    r"const\s+multiplier\s*=\s*tier\s*===\s*['\"]fast['\"]\s*\|\|\s*tier\s*===\s*['\"]priority['\"]\s*"
+    r"\?\s*FAST_SUBSCRIPTION_MULTIPLIER\s*:\s*1\s*;",
+    re.MULTILINE,
 )
 
 match = pattern.search(text)
 if not match:
-    for m in re.finditer("FAST_SUBSCRIPTION_MULTIPLIER", text):
-        start = max(0, m.start() - 600)
-        end = min(len(text), m.end() + 900)
-        print("--- FAST POLICY CONTEXT ---")
-        print(text[start:end])
     raise SystemExit("generic Fast multiplier expression not found")
 row = match.group("row")
-text = text[: match.start()] + f"const tierMultiplier = subscriptionSpeedMultiplier({row});" + text[match.end() :]
+text = text[: match.start()] + f"const multiplier = subscriptionSpeedMultiplier({row});" + text[match.end() :]
 
 text = text.replace(
     "Fast 2.5×",
     "Codex Fast: GPT-5.6/5.5 2.5× · GPT-5.4 2×",
+)
+text = text.replace(
+    "fastMultiplier: FAST_SUBSCRIPTION_MULTIPLIER,",
+    "fastMultiplier: 2.5,",
 )
 
 if "FAST_SUBSCRIPTION_MULTIPLIER" in text:
