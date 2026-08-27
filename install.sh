@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-BASE="${TOKEN_MONITOR_RELEASE_BASE:-https://token-monitor-v110-final-cuidongshan350-1312.vercel.app}"
+BASE="${TOKEN_MONITOR_RELEASE_BASE:-https://github.com/Atingaii/token-monitor/releases/download/v1.1.0}"
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
